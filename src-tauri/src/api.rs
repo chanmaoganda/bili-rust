@@ -346,13 +346,21 @@ impl Bili {
         })
     }
 
-    /// /x/relation/modify — follow (act=1) or unfollow (act=2). re_src=11 mimics
-    /// the web client's source tag.
+    /// /x/relation/modify — follow (act=1) or unfollow (act=2). The extra
+    /// fields (re_src=14, gaia_source, spmid, extend_content) mirror what
+    /// the web client posts from a video page; without them risk-control
+    /// rejects the request on some accounts even though like/coin succeed.
     pub async fn relation_modify(&self, mid: i64, follow: bool) -> Result<()> {
         let mut form = BTreeMap::new();
         form.insert("fid", mid.to_string());
         form.insert("act", if follow { "1" } else { "2" }.to_string());
-        form.insert("re_src", "11".to_string());
+        form.insert("re_src", "14".to_string());
+        form.insert("gaia_source", "web_main".to_string());
+        form.insert("spmid", "333.999.0.0".to_string());
+        form.insert(
+            "extend_content",
+            format!(r#"{{"entity":"user","entity_id":{mid}}}"#),
+        );
         form.insert("csrf", self.cookies.csrf.clone());
         self.post_form("https://api.bilibili.com/x/relation/modify", form, "relation_modify").await
     }
