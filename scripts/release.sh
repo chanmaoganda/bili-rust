@@ -38,8 +38,30 @@ rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$' 
     exit 1
 }
 
-echo "==> building release (no bundle)"
-cargo tauri build --no-bundle
+# Run Trunk only if any file under ui/src is newer than the current dist
+# index. Trunk rewrites all dist files on every run (same bytes, new mtimes),
+# which triggers tauri-build's frontendDist watcher and forces an LTO relink
+# of bili-rust even when nothing has changed. Skipping when fresh keeps
+# repeat builds at zero work.
+DIST_INDEX="ui/dist/index.html"
+need_trunk=1
+if [[ -f "$DIST_INDEX" ]]; then
+    if [[ -z "$(find ui/src ui/style.css ui/index.html ui/Trunk.toml -newer "$DIST_INDEX" -print -quit 2>/dev/null)" ]]; then
+        need_trunk=0
+    fi
+fi
+if (( need_trunk )); then
+    echo "==> building UI (trunk)"
+    (cd ui && trunk build --release)
+else
+    echo "==> ui/dist is fresh, skipping trunk"
+fi
+
+# Bypass `cargo tauri build` so a second run with no source changes is a true
+# cache hit. The Tauri wrapper would re-run beforeBuildCommand unconditionally,
+# defeating cargo incrementality.
+echo "==> building release binary"
+cargo build --release -p bili-rust --bin bili-rust
 
 [[ -x "$TARGET_BIN" ]] || { echo "expected binary at $TARGET_BIN, not found" >&2; exit 1; }
 
