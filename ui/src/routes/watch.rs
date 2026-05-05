@@ -16,14 +16,15 @@ pub fn Watch() -> impl IntoView {
         query.read().get("cid").and_then(|s| s.parse::<i64>().ok())
     });
 
-    let qn = RwSignal::new(None::<u32>);
+    let qn = RwSignal::new(crate::prefs::get_preferred_qn());
     let resume_at = RwSignal::new(0.0_f64);
 
-    // Reset resume position when navigating to a different video.
+    // Reset resume position when navigating to a different video, and re-apply
+    // the saved quality preference so it survives across videos.
     Effect::new(move |_| {
         let _ = bvid.get();
         resume_at.set(0.0);
-        qn.set(None);
+        qn.set(crate::prefs::get_preferred_qn());
     });
 
     let play = LocalResource::new(move || {
@@ -68,6 +69,7 @@ pub fn Watch() -> impl IntoView {
                                                 let target = ev.target().and_then(|t| t.dyn_into::<HtmlSelectElement>().ok());
                                                 if let Some(sel) = target {
                                                     if let Ok(v) = sel.value().parse::<u32>() {
+                                                        crate::prefs::set_preferred_qn(v);
                                                         qn.set(Some(v));
                                                     }
                                                 }

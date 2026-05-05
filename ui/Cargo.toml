@@ -13,11 +13,18 @@ web-sys = { version = "0.3", features = [
   "HtmlVideoElement",
   "HtmlSelectElement",
   "HtmlElement",
+  "HtmlInputElement",
+  "HtmlTextAreaElement",
   "Window",
   "Document",
   "Element",
   "Event",
   "EventTarget",
+  "KeyboardEvent",
+  "IntersectionObserver",
+  "IntersectionObserverInit",
+  "IntersectionObserverEntry",
+  "Storage",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"

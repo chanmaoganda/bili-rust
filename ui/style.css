@@ -68,3 +68,7 @@ main { padding: 20px; max-width: 1600px; margin: 0 auto; }
 
 .empty, .error, .loading { color: var(--muted); padding: 24px; text-align: center; }
 .error { color: #ff7a7a; }
+.error button { margin-left: 12px; padding: 4px 10px; background: var(--panel);
+  color: var(--text); border: 1px solid #2b303b; border-radius: 6px; cursor: pointer; }
+.error button:hover { border-color: var(--accent); color: var(--accent); }
+.scroll-sentinel { height: 1px; }

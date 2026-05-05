@@ -4,7 +4,22 @@ use leptos::prelude::*;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::HtmlVideoElement;
+use web_sys::{
+    HtmlElement, HtmlInputElement, HtmlTextAreaElement, HtmlVideoElement, KeyboardEvent,
+};
+
+struct KeydownGuard {
+    window: web_sys::Window,
+    closure: Closure<dyn FnMut(KeyboardEvent)>,
+}
+
+impl Drop for KeydownGuard {
+    fn drop(&mut self) {
+        let _ = self
+            .window
+            .remove_event_listener_with_callback("keydown", self.closure.as_ref().unchecked_ref());
+    }
+}
 
 #[component]
 pub fn Player(
@@ -31,6 +46,49 @@ pub fn Player(
             web_sys::console::error_1(&format!("dash.js init: {e:?}").into());
         }
     });
+
+    // F-key toggles fullscreen on the <video> element. Returning the listener
+    // guard from the Effect ensures it's dropped (and the listener removed)
+    // when the component unmounts or the effect re-runs.
+    Effect::new(
+        move |_prev: Option<Option<KeydownGuard>>| -> Option<KeydownGuard> {
+            let el = video_ref.get()?;
+            let video: HtmlVideoElement = el.unchecked_into();
+            let window = web_sys::window()?;
+            let document = window.document()?;
+
+            let video_for_cb = video.clone();
+            let doc_for_cb = document.clone();
+            let closure = Closure::<dyn FnMut(KeyboardEvent)>::new(move |ev: KeyboardEvent| {
+                if !ev.key().eq_ignore_ascii_case("f") {
+                    return;
+                }
+                // Don't hijack F when the user is typing somewhere.
+                if let Some(active) = doc_for_cb.active_element() {
+                    let typing = active.dyn_ref::<HtmlInputElement>().is_some()
+                        || active.dyn_ref::<HtmlTextAreaElement>().is_some()
+                        || active
+                            .dyn_ref::<HtmlElement>()
+                            .map(|e| e.is_content_editable())
+                            .unwrap_or(false);
+                    if typing {
+                        return;
+                    }
+                }
+                ev.prevent_default();
+                if doc_for_cb.fullscreen_element().is_some() {
+                    let _ = doc_for_cb.exit_fullscreen();
+                } else {
+                    let _ = video_for_cb.request_fullscreen();
+                }
+            });
+
+            let _ = window
+                .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref());
+
+            Some(KeydownGuard { window, closure })
+        },
+    );
 
     view! { <video controls autoplay node_ref=video_ref></video> }
 }
