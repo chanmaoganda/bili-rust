@@ -1,5 +1,5 @@
 use crate::api;
-use crate::components::video_card::VideoCardView;
+use crate::components::video_card::{DislikeReason, VideoCardView};
 use crate::state::RecommendState;
 use crate::types::VideoCard;
 use leptos::prelude::*;
@@ -18,12 +18,23 @@ impl Drop for ObserverGuard {
     }
 }
 
+/// CSV of `av_<aid>` for the last N cards already shown — server-side dedup.
+fn last_showlist_csv(cards: &[VideoCard], n: usize) -> String {
+    let start = cards.len().saturating_sub(n);
+    cards[start..]
+        .iter()
+        .map(|c| format!("av_{}", c.aid))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[component]
 pub fn Home() -> impl IntoView {
     let state = use_context::<RecommendState>().expect("RecommendState context missing");
     let RecommendState {
         cards,
         fresh_idx,
+        brush,
         loading,
         error,
         attempted,
@@ -40,8 +51,10 @@ pub fn Home() -> impl IntoView {
         loading.set(true);
         error.set(None);
         let idx = fresh_idx.get_untracked();
+        let br = brush.get_untracked();
+        let last = cards.with_untracked(|v| last_showlist_csv(v, 20));
         leptos::task::spawn_local(async move {
-            match api::get_rcmd(idx).await {
+            match api::get_rcmd(idx, br, &last).await {
                 Ok(mut more) => {
                     if more.is_empty() {
                         end_reached.set(true);
@@ -134,7 +147,7 @@ pub fn Home() -> impl IntoView {
         }
     });
 
-    let on_refresh = move |_| {
+    let on_reset = move |_| {
         if loading.get_untracked() {
             return;
         }
@@ -145,23 +158,60 @@ pub fn Home() -> impl IntoView {
         load_more.with_value(|f| f());
     };
 
+    let on_rotate = move |_| {
+        if loading.get_untracked() {
+            return;
+        }
+        state.rotate();
+        if let Some(win) = web_sys::window() {
+            win.scroll_to_with_x_and_y(0.0, 0.0);
+        }
+        load_more.with_value(|f| f());
+    };
+
+    let on_dislike: Callback<(VideoCard, DislikeReason)> =
+        Callback::new(move |(card, reason): (VideoCard, DislikeReason)| {
+            // Optimistic remove — keep UI snappy. If the API call fails the
+            // user can refresh to bring the item back.
+            cards.update(|v| v.retain(|c| c.bvid != card.bvid));
+            let aid = card.aid;
+            let (mid, rid, tag_id, reason_id) = match reason {
+                DislikeReason::Content => (None, None, None, 1u32),
+                DislikeReason::Up => (Some(card.up_mid), None, None, 2),
+                DislikeReason::Category => (None, card.tid, None, 3),
+            };
+            leptos::task::spawn_local(async move {
+                if let Err(e) = api::feed_dislike("av", aid, mid, rid, tag_id, reason_id).await {
+                    web_sys::console::warn_1(&format!("dislike failed: {e}").into());
+                }
+            });
+        });
+
     view! {
         <div>
             <div class="feed-toolbar">
                 <button
                     class="refresh"
-                    on:click=on_refresh
+                    on:click=on_rotate
                     disabled=move || loading.get()
-                    title="Refresh recommendations"
+                    title="换一换 — 保留会话，请求新的一页"
                 >
-                    "↻ Refresh"
+                    "↻ 换一换"
+                </button>
+                <button
+                    class="refresh"
+                    on:click=on_reset
+                    disabled=move || loading.get()
+                    title="重置 — 清空当前会话，从头开始"
+                >
+                    "⟲ 重置"
                 </button>
             </div>
             <div class="grid">
                 <For
                     each=move || cards.get()
                     key=|c: &VideoCard| c.bvid.clone()
-                    children=move |c| view! { <VideoCardView card=c /> }
+                    children=move |c| view! { <VideoCardView card=c on_dislike=on_dislike /> }
                 />
             </div>
             {move || (attempted.get() && cards.with(|c| c.is_empty()) && error.with(|e| e.is_none()))

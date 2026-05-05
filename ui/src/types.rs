@@ -20,6 +20,12 @@ pub struct VideoCard {
     pub up_name: String,
     pub up_face: String,
     pub up_mid: i64,
+    #[serde(default)]
+    pub rcmd_reason: Option<String>,
+    #[serde(default)]
+    pub tname: Option<String>,
+    #[serde(default)]
+    pub tid: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

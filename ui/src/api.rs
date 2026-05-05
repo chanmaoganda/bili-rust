@@ -28,7 +28,21 @@ struct NoArgs {}
 struct RcmdArgs<'a> {
     #[serde(rename = "freshIdx")]
     fresh_idx: u32,
-    _marker: std::marker::PhantomData<&'a ()>,
+    brush: u32,
+    #[serde(rename = "lastShowlist")]
+    last_showlist: &'a str,
+}
+
+#[derive(Serialize)]
+struct DislikeArgs<'a> {
+    goto: &'a str,
+    id: i64,
+    mid: Option<i64>,
+    rid: Option<i64>,
+    #[serde(rename = "tagId")]
+    tag_id: Option<i64>,
+    #[serde(rename = "reasonId")]
+    reason_id: u32,
 }
 
 #[derive(Serialize)]
@@ -59,10 +73,29 @@ pub async fn get_user_info() -> Result<UserInfo, String> {
     invoke("get_user_info", NoArgs {}).await
 }
 
-pub async fn get_rcmd(fresh_idx: u32) -> Result<Vec<VideoCard>, String> {
+pub async fn get_rcmd(
+    fresh_idx: u32,
+    brush: u32,
+    last_showlist: &str,
+) -> Result<Vec<VideoCard>, String> {
     invoke(
         "get_rcmd",
-        RcmdArgs { fresh_idx, _marker: std::marker::PhantomData },
+        RcmdArgs { fresh_idx, brush, last_showlist },
+    )
+    .await
+}
+
+pub async fn feed_dislike(
+    goto: &str,
+    id: i64,
+    mid: Option<i64>,
+    rid: Option<i64>,
+    tag_id: Option<i64>,
+    reason_id: u32,
+) -> Result<(), String> {
+    invoke(
+        "feed_dislike",
+        DislikeArgs { goto, id, mid, rid, tag_id, reason_id },
     )
     .await
 }

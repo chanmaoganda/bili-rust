@@ -74,8 +74,23 @@ impl Bili {
         Ok(keys)
     }
 
-    /// Personalized homepage feed
-    pub async fn rcmd(&self, fresh_idx: u32, ps: u32) -> Result<Vec<Value>> {
+    /// Personalized homepage feed.
+    ///
+    /// `fresh_idx` is the per-page scroll cursor (increment on infinite-scroll);
+    /// `brush` is the session-level "换一换" counter (increment only on explicit
+    /// rotate, otherwise pinned). Mixing the two confuses the ranker — see
+    /// bilibili-API-collect docs.
+    ///
+    /// `last_showlist` is a CSV of `av_<aid>` already shown to the user, used by
+    /// the server to dedup across pages. Pass an empty string for the first
+    /// request.
+    pub async fn rcmd(
+        &self,
+        fresh_idx: u32,
+        brush: u32,
+        ps: u32,
+        last_showlist: &str,
+    ) -> Result<Vec<Value>> {
         let keys = self.wbi_keys().await?;
         let mut params = BTreeMap::new();
         params.insert("fresh_type".to_string(), "4".to_string());
@@ -83,10 +98,13 @@ impl Bili {
         params.insert("ps".to_string(), ps.to_string());
         params.insert("fresh_idx".to_string(), fresh_idx.to_string());
         params.insert("fresh_idx_1h".to_string(), fresh_idx.to_string());
-        params.insert("brush".to_string(), fresh_idx.to_string());
+        params.insert("brush".to_string(), brush.to_string());
         params.insert("homepage_ver".to_string(), "1".to_string());
         params.insert("feed_version".to_string(), "V8".to_string());
         params.insert("web_location".to_string(), "1430650".to_string());
+        if !last_showlist.is_empty() {
+            params.insert("last_showlist".to_string(), last_showlist.to_string());
+        }
         let (w_rid, wts) = wbi::sign(&mut params, &keys);
         params.insert("w_rid".to_string(), w_rid);
         params.insert("wts".to_string(), wts);
@@ -103,6 +121,55 @@ impl Bili {
             return Err(anyhow!("rcmd failed: code={} msg={}", v.code, v.message));
         }
         Ok(v.data.map(|d| d.item).unwrap_or_default())
+    }
+
+    /// /x/feed/dislike — train the rcmd ranker by hiding a card and signalling
+    /// why. `reason_id` semantics (matched against B站 web client):
+    ///   1 = 内容不感兴趣 (just `id`)
+    ///   2 = UP不再推荐    (`id` + `mid`)
+    ///   3 = 分区不再推荐  (`id` + `rid`)
+    /// Server side is async — operation succeeds even if the next /rcmd batch
+    /// is already in flight.
+    pub async fn dislike(
+        &self,
+        goto: &str,
+        id: i64,
+        mid: Option<i64>,
+        rid: Option<i64>,
+        tag_id: Option<i64>,
+        reason_id: u32,
+    ) -> Result<()> {
+        let keys = self.wbi_keys().await?;
+        let mut params = BTreeMap::new();
+        params.insert("goto".to_string(), goto.to_string());
+        params.insert("id".to_string(), id.to_string());
+        if let Some(m) = mid {
+            params.insert("mid".to_string(), m.to_string());
+        }
+        if let Some(r) = rid {
+            params.insert("rid".to_string(), r.to_string());
+        }
+        if let Some(t) = tag_id {
+            params.insert("tag_id".to_string(), t.to_string());
+        }
+        params.insert("reason_id".to_string(), reason_id.to_string());
+        let (w_rid, wts) = wbi::sign(&mut params, &keys);
+        params.insert("w_rid".to_string(), w_rid);
+        params.insert("wts".to_string(), wts);
+
+        let v: ApiEnvelope<Value> = self
+            .client
+            .get("https://api.bilibili.com/x/feed/dislike")
+            .query(&params)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!("dislike failed: code={} msg={}", v.code, v.message));
+        }
+        tracing::debug!(goto, id, ?mid, ?rid, ?tag_id, reason_id, "dislike ok");
+        Ok(())
     }
 
     /// Related videos for a given bvid

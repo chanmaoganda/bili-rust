@@ -42,6 +42,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_user_info,
             commands::get_rcmd,
+            commands::feed_dislike,
             commands::get_related,
             commands::get_play_info,
             commands::get_danmaku,

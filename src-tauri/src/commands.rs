@@ -32,6 +32,9 @@ pub struct VideoCard {
     pub up_name: String,
     pub up_face: String,
     pub up_mid: i64,
+    pub rcmd_reason: Option<String>,
+    pub tname: Option<String>,
+    pub tid: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -106,9 +109,33 @@ pub async fn get_user_info(state: BiliState<'_>) -> Result<UserInfo, String> {
 }
 
 #[tauri::command]
-pub async fn get_rcmd(state: BiliState<'_>, fresh_idx: u32) -> Result<Vec<VideoCard>, String> {
-    let items = state.rcmd(fresh_idx, 12).await.map_err(err)?;
+pub async fn get_rcmd(
+    state: BiliState<'_>,
+    fresh_idx: u32,
+    brush: u32,
+    last_showlist: String,
+) -> Result<Vec<VideoCard>, String> {
+    let items = state
+        .rcmd(fresh_idx, brush, 24, &last_showlist)
+        .await
+        .map_err(err)?;
     Ok(items.iter().filter_map(card_from_rcmd_item).collect())
+}
+
+#[tauri::command]
+pub async fn feed_dislike(
+    state: BiliState<'_>,
+    goto: String,
+    id: i64,
+    mid: Option<i64>,
+    rid: Option<i64>,
+    tag_id: Option<i64>,
+    reason_id: u32,
+) -> Result<(), String> {
+    state
+        .dislike(&goto, id, mid, rid, tag_id, reason_id)
+        .await
+        .map_err(err)
 }
 
 #[tauri::command]
@@ -362,6 +389,10 @@ fn track_from(t: &Value) -> Option<DashTrack> {
     })
 }
 
+fn nonempty(s: &str) -> Option<String> {
+    if s.is_empty() { None } else { Some(s.to_string()) }
+}
+
 fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
     // rcmd items have goto="av" for normal videos. Skip ads ("ad", "live", etc.)
     let goto = item.get("goto").and_then(|v| v.as_str()).unwrap_or("");
@@ -370,6 +401,15 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
     }
     let pic = item.get("pic").and_then(|v| v.as_str()).unwrap_or("");
     let up_face = item.pointer("/owner/face").and_then(|v| v.as_str()).unwrap_or("");
+    let rcmd_reason = item
+        .pointer("/rcmd_reason/content")
+        .and_then(|v| v.as_str())
+        .and_then(nonempty);
+    let tname = item
+        .get("tname")
+        .and_then(|v| v.as_str())
+        .and_then(nonempty);
+    let tid = item.get("tid").and_then(|v| v.as_i64());
     Some(VideoCard {
         bvid: item.get("bvid").and_then(|v| v.as_str())?.to_string(),
         aid: item.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
@@ -389,12 +429,20 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
             .to_string(),
         up_face: proxy_image(up_face),
         up_mid: item.pointer("/owner/mid").and_then(|v| v.as_i64()).unwrap_or(0),
+        rcmd_reason,
+        tname,
+        tid,
     })
 }
 
 fn card_from_related_item(item: &Value) -> Option<VideoCard> {
     let pic = item.get("pic").and_then(|v| v.as_str()).unwrap_or("");
     let up_face = item.pointer("/owner/face").and_then(|v| v.as_str()).unwrap_or("");
+    let tname = item
+        .get("tname")
+        .and_then(|v| v.as_str())
+        .and_then(nonempty);
+    let tid = item.get("tid").and_then(|v| v.as_i64());
     Some(VideoCard {
         bvid: item.get("bvid").and_then(|v| v.as_str())?.to_string(),
         aid: item.get("aid").and_then(|v| v.as_i64()).unwrap_or(0),
@@ -414,5 +462,8 @@ fn card_from_related_item(item: &Value) -> Option<VideoCard> {
             .to_string(),
         up_face: proxy_image(up_face),
         up_mid: item.pointer("/owner/mid").and_then(|v| v.as_i64()).unwrap_or(0),
+        rcmd_reason: None,
+        tname,
+        tid,
     })
 }
