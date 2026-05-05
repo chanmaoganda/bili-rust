@@ -148,10 +148,10 @@ impl Bili {
         params.insert("fnval".to_string(), "4048".to_string());
         params.insert("fnver".to_string(), "0".to_string());
         params.insert("fourk".to_string(), "1".to_string());
-        // platform=html5 + high_quality=1 → drops referer-strict CDN nodes,
-        // generally returns faster mcdn.bilivideo.cn endpoints.
-        params.insert("platform".to_string(), "html5".to_string());
-        params.insert("high_quality".to_string(), "1".to_string());
+        // platform=pc (not html5): html5 caps frame rate at 30fps server-side,
+        // so qn=116/120 etc. silently downgrade to 1080P30. Our segment proxy
+        // sets Referer/Origin/Cookie, so referer-strict CDN nodes still work.
+        params.insert("platform".to_string(), "pc".to_string());
         let (w_rid, wts) = wbi::sign(&mut params, &keys);
         params.insert("w_rid".to_string(), w_rid);
         params.insert("wts".to_string(), wts);
