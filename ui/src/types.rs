@@ -48,6 +48,30 @@ pub struct PlayInfo {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ViewInfo {
+    pub bvid: String,
+    pub aid: i64,
+    pub cid: i64,
+    pub title: String,
+    pub desc: String,
+    pub pic: String,
+    pub duration: i64,
+    pub pubdate: i64,
+    pub tname: String,
+    pub tid: i64,
+    pub up_name: String,
+    pub up_face: String,
+    pub up_mid: i64,
+    pub view: i64,
+    pub danmaku: i64,
+    pub reply: i64,
+    pub favorite: i64,
+    pub coin: i64,
+    pub like: i64,
+    pub share: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct DashTrack {
     pub id: i64,
     pub mime: String,

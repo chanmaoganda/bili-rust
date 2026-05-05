@@ -45,6 +45,7 @@ pub fn run() {
             commands::feed_dislike,
             commands::get_related,
             commands::get_play_info,
+            commands::get_view_info,
             commands::get_danmaku,
             commands::get_comments,
         ])

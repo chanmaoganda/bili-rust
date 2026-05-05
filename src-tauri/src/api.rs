@@ -340,6 +340,16 @@ pub struct ViewData {
     pub duration: i64,
     #[serde(default)]
     pub owner: ViewOwner,
+    #[serde(default)]
+    pub desc: String,
+    #[serde(default)]
+    pub pubdate: i64,
+    #[serde(default)]
+    pub tname: String,
+    #[serde(default)]
+    pub tid: i64,
+    #[serde(default)]
+    pub stat: ViewStat,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -350,4 +360,22 @@ pub struct ViewOwner {
     pub name: String,
     #[serde(default)]
     pub face: String,
+}
+
+#[derive(Deserialize, Debug, Default)]
+pub struct ViewStat {
+    #[serde(default)]
+    pub view: i64,
+    #[serde(default)]
+    pub danmaku: i64,
+    #[serde(default)]
+    pub reply: i64,
+    #[serde(default)]
+    pub favorite: i64,
+    #[serde(default)]
+    pub coin: i64,
+    #[serde(default)]
+    pub like: i64,
+    #[serde(default)]
+    pub share: i64,
 }

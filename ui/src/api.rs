@@ -112,6 +112,10 @@ pub async fn get_play_info(
     invoke("get_play_info", PlayArgs { bvid, cid, qn }).await
 }
 
+pub async fn get_view_info(bvid: &str) -> Result<ViewInfo, String> {
+    invoke("get_view_info", BvidArgs { bvid }).await
+}
+
 pub async fn get_danmaku(cid: i64) -> Result<Vec<Danmaku>, String> {
     invoke("get_danmaku", CidArgs { cid }).await
 }

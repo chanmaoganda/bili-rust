@@ -3,7 +3,7 @@ use crate::components::comments::Comments;
 use crate::components::danmaku::DanmakuOverlay;
 use crate::components::player::Player;
 use crate::components::video_card::VideoCardView;
-use crate::types::VideoCard;
+use crate::types::{fmt_ctime, fmt_views, VideoCard};
 use leptos::prelude::*;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use wasm_bindgen::JsCast;
@@ -39,6 +39,10 @@ pub fn Watch() -> impl IntoView {
         let bv = bvid.get();
         async move { api::get_related(&bv).await }
     });
+    let view_info = LocalResource::new(move || {
+        let bv = bvid.get();
+        async move { api::get_view_info(&bv).await }
+    });
 
     let on_time = Callback::new(move |t: f64| resume_at.set(t));
 
@@ -48,8 +52,15 @@ pub fn Watch() -> impl IntoView {
     let dm_enabled = RwSignal::new(crate::prefs::get_danmaku_enabled());
     let dm_opacity = RwSignal::new(crate::prefs::get_danmaku_opacity());
     let danmaku_cid = Signal::derive(move || {
-        // Use the cid resolved by the play-info call when the URL didn't carry one.
-        cid.get().or_else(|| play.get().and_then(|r| r.ok()).map(|p| p.cid))
+        // Guard against stale PlayInfo during a bvid switch: LocalResource keeps
+        // returning the previous Ok value while refetching, which would let the
+        // old video's danmaku list keep playing on the new <video>. Filter by bvid.
+        let current_bv = bvid.get();
+        match play.get().and_then(|r| r.ok()) {
+            Some(p) if p.bvid == current_bv => Some(p.cid),
+            Some(_) => None,
+            None => cid.get(),
+        }
     });
     let danmakus = LocalResource::new(move || {
         let c = danmaku_cid.get();
@@ -70,9 +81,35 @@ pub fn Watch() -> impl IntoView {
                     None => view! { <div class="loading">"Loading player…"</div> }.into_any(),
                     Some(res) => match res {
                         Ok(info) => {
-                            let title = info.title.clone();
-                            let up_face = info.up_face.clone();
-                            let up_name = info.up_name.clone();
+                            // Fall back to PlayInfo only when the dedicated /view fetch hasn't returned;
+                            // PlayInfo's fast path leaves these empty, so view_info is the real source.
+                            let fallback_title = info.title.clone();
+                            let fallback_up_face = info.up_face.clone();
+                            let fallback_up_name = info.up_name.clone();
+                            let title_view = move || {
+                                view_info
+                                    .get()
+                                    .and_then(|r| r.ok())
+                                    .map(|v| v.title)
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or_else(|| fallback_title.clone())
+                            };
+                            let up_face_view = move || {
+                                view_info
+                                    .get()
+                                    .and_then(|r| r.ok())
+                                    .map(|v| v.up_face)
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or_else(|| fallback_up_face.clone())
+                            };
+                            let up_name_view = move || {
+                                view_info
+                                    .get()
+                                    .and_then(|r| r.ok())
+                                    .map(|v| v.up_name)
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or_else(|| fallback_up_name.clone())
+                            };
                             let qualities: Vec<(u32, String)> = info
                                 .accept_quality
                                 .iter()
@@ -105,7 +142,7 @@ pub fn Watch() -> impl IntoView {
                                     />
                                 </div>
                                 <div class="player-bar">
-                                    <h1>{title}</h1>
+                                    <h1>{title_view}</h1>
                                     <button
                                         class="dm-toggle"
                                         on:click=move |_| {
@@ -155,8 +192,26 @@ pub fn Watch() -> impl IntoView {
                                     })}
                                 </div>
                                 <div class="up">
-                                    <img src=up_face alt="" />
-                                    <span>{up_name}</span>
+                                    <img src=up_face_view alt="" />
+                                    <span>{up_name_view}</span>
+                                </div>
+                                <div class="info">
+                                    {move || view_info.get().and_then(|r| r.ok()).map(|v| view! {
+                                        <div class="stats">
+                                            <span>{fmt_views(v.view)}" 播放"</span>
+                                            <span>{fmt_views(v.danmaku)}" 弹幕"</span>
+                                            <span>{fmt_views(v.like)}" 点赞"</span>
+                                            <span>{fmt_views(v.coin)}" 投币"</span>
+                                            <span>{fmt_views(v.favorite)}" 收藏"</span>
+                                            <span>{fmt_views(v.share)}" 分享"</span>
+                                            <span class="meta">
+                                                {fmt_ctime(v.pubdate)}" · "{v.tname.clone()}
+                                            </span>
+                                        </div>
+                                        {(!v.desc.is_empty()).then(|| view! {
+                                            <pre class="desc">{v.desc.clone()}</pre>
+                                        })}
+                                    })}
                                 </div>
                             }
                                 .into_any()

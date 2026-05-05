@@ -111,6 +111,13 @@ main { padding: 20px; max-width: 1600px; margin: 0 auto; }
 .watch h1 { font-size: 18px; margin: 12px 0 8px; flex: 1; }
 .watch .up { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
 .watch .up img { width: 36px; height: 36px; border-radius: 50%; }
+.watch .info { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.watch .info .stats { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 13px; }
+.watch .info .stats .meta { margin-left: auto; }
+.watch .info .desc {
+  white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 13px;
+  color: var(--muted); margin: 0; padding: 8px 0 0; border-top: 1px solid #2b303b;
+}
 
 .player-bar { display: flex; align-items: center; gap: 12px; }
 .quality {

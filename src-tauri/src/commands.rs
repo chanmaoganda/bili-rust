@@ -54,6 +54,30 @@ pub struct PlayInfo {
 }
 
 #[derive(Serialize)]
+pub struct ViewInfo {
+    pub bvid: String,
+    pub aid: i64,
+    pub cid: i64,
+    pub title: String,
+    pub desc: String,
+    pub pic: String,
+    pub duration: i64,
+    pub pubdate: i64,
+    pub tname: String,
+    pub tid: i64,
+    pub up_name: String,
+    pub up_face: String,
+    pub up_mid: i64,
+    pub view: i64,
+    pub danmaku: i64,
+    pub reply: i64,
+    pub favorite: i64,
+    pub coin: i64,
+    pub like: i64,
+    pub share: i64,
+}
+
+#[derive(Serialize)]
 pub struct CommentMember {
     pub mid: i64,
     pub uname: String,
@@ -92,8 +116,8 @@ pub struct DashTrack {
     pub height: i64,
     pub frame_rate: String,
     pub base_url: String,
-    pub init_range: String,    // "start-end"
-    pub index_range: String,   // "start-end"
+    pub init_range: String,  // "start-end"
+    pub index_range: String, // "start-end"
 }
 
 #[tauri::command]
@@ -166,7 +190,9 @@ pub async fn get_play_info(
     };
 
     let raw = state.play_url(&bvid, cid, qn).await.map_err(err)?;
-    let dash = raw.get("dash").ok_or_else(|| "no dash in playurl response".to_string())?;
+    let dash = raw
+        .get("dash")
+        .ok_or_else(|| "no dash in playurl response".to_string())?;
 
     let video: Vec<DashTrack> = dash
         .get("video")
@@ -182,12 +208,20 @@ pub async fn get_play_info(
     let mut accept_quality: Vec<u32> = raw
         .get("accept_quality")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as u32)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_u64().map(|n| n as u32))
+                .collect()
+        })
         .unwrap_or_default();
     let mut accept_description: Vec<String> = raw
         .get("accept_description")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
     // Bilibili occasionally returns mismatched arrays for unauthenticated users.
     let n = accept_quality.len().min(accept_description.len());
@@ -201,12 +235,22 @@ pub async fn get_play_info(
 
     let view_fallback = view_meta.is_some();
     let (title, duration, up_name, up_face, up_mid) = if let Some(v) = view_meta {
-        (v.title, v.duration, v.owner.name, proxy_image(&v.owner.face), v.owner.mid)
+        (
+            v.title,
+            v.duration,
+            v.owner.name,
+            proxy_image(&v.owner.face),
+            v.owner.mid,
+        )
     } else {
         let dur = raw
             .pointer("/dash/duration")
             .and_then(|v| v.as_i64())
-            .or_else(|| raw.get("timelength").and_then(|v| v.as_i64()).map(|ms| ms / 1000))
+            .or_else(|| {
+                raw.get("timelength")
+                    .and_then(|v| v.as_i64())
+                    .map(|ms| ms / 1000)
+            })
             .unwrap_or(0);
         (String::new(), dur, String::new(), String::new(), 0)
     };
@@ -239,6 +283,33 @@ pub async fn get_play_info(
 }
 
 #[tauri::command]
+pub async fn get_view_info(state: BiliState<'_>, bvid: String) -> Result<ViewInfo, String> {
+    let v = state.view(&bvid).await.map_err(err)?;
+    Ok(ViewInfo {
+        bvid: v.bvid,
+        aid: v.aid,
+        cid: v.cid,
+        title: v.title,
+        desc: v.desc,
+        pic: proxy_image(&v.pic),
+        duration: v.duration,
+        pubdate: v.pubdate,
+        tname: v.tname,
+        tid: v.tid,
+        up_name: v.owner.name,
+        up_face: proxy_image(&v.owner.face),
+        up_mid: v.owner.mid,
+        view: v.stat.view,
+        danmaku: v.stat.danmaku,
+        reply: v.stat.reply,
+        favorite: v.stat.favorite,
+        coin: v.stat.coin,
+        like: v.stat.like,
+        share: v.stat.share,
+    })
+}
+
+#[tauri::command]
 pub async fn get_danmaku(state: BiliState<'_>, cid: i64) -> Result<Vec<Danmaku>, String> {
     state.danmaku(cid).await.map_err(err)
 }
@@ -253,10 +324,22 @@ pub async fn get_comments(
     let view = state.view(&bvid).await.map_err(err)?;
     let raw = state.comments(view.aid, pn, 20, sort).await.map_err(err)?;
 
-    let page = raw.pointer("/page/num").and_then(|v| v.as_u64()).unwrap_or(pn as u64) as u32;
-    let size = raw.pointer("/page/size").and_then(|v| v.as_u64()).unwrap_or(20) as u32;
-    let count = raw.pointer("/page/count").and_then(|v| v.as_i64()).unwrap_or(0);
-    let acount = raw.pointer("/page/acount").and_then(|v| v.as_i64()).unwrap_or(count);
+    let page = raw
+        .pointer("/page/num")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(pn as u64) as u32;
+    let size = raw
+        .pointer("/page/size")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20) as u32;
+    let count = raw
+        .pointer("/page/count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let acount = raw
+        .pointer("/page/acount")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(count);
 
     let replies: Vec<Comment> = raw
         .get("replies")
@@ -264,7 +347,13 @@ pub async fn get_comments(
         .map(|arr| arr.iter().filter_map(|v| comment_from(v, 0)).collect())
         .unwrap_or_default();
 
-    Ok(CommentPage { page, size, count, acount, replies })
+    Ok(CommentPage {
+        page,
+        size,
+        count,
+        acount,
+        replies,
+    })
 }
 
 /// Map a JSON reply node to our typed Comment. `depth` guards inline-replies
@@ -285,7 +374,11 @@ fn comment_from(item: &Value, depth: u8) -> Option<Comment> {
         // member.mid arrives as a string in this API; fall back to the top-level mid.
         mid: item
             .pointer("/member/mid")
-            .and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_i64()))
+            .and_then(|v| {
+                v.as_str()
+                    .and_then(|s| s.parse().ok())
+                    .or_else(|| v.as_i64())
+            })
             .unwrap_or(mid),
         uname: item
             .pointer("/member/uname")
@@ -307,7 +400,11 @@ fn comment_from(item: &Value, depth: u8) -> Option<Comment> {
     let replies = if depth == 0 {
         item.get("replies")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| comment_from(v, depth + 1)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| comment_from(v, depth + 1))
+                    .collect()
+            })
             .unwrap_or_default()
     } else {
         Vec::new()
@@ -354,7 +451,10 @@ fn track_from(t: &Value) -> Option<DashTrack> {
     };
 
     let init_range = if seg.is_some() {
-        str_field(seg, &["initialization", "Initialization", "init_range", "init"])
+        str_field(
+            seg,
+            &["initialization", "Initialization", "init_range", "init"],
+        )
     } else {
         // Sometimes flattened on the track itself.
         str_field(Some(t), &["initialization", "Initialization"])
@@ -373,7 +473,11 @@ fn track_from(t: &Value) -> Option<DashTrack> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        codecs: t.get("codecs").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        codecs: t
+            .get("codecs")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         bandwidth: t.get("bandwidth").and_then(|v| v.as_i64()).unwrap_or(0),
         width: t.get("width").and_then(|v| v.as_i64()).unwrap_or(0),
         height: t.get("height").and_then(|v| v.as_i64()).unwrap_or(0),
@@ -390,7 +494,11 @@ fn track_from(t: &Value) -> Option<DashTrack> {
 }
 
 fn nonempty(s: &str) -> Option<String> {
-    if s.is_empty() { None } else { Some(s.to_string()) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
 fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
@@ -400,7 +508,10 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
         return None;
     }
     let pic = item.get("pic").and_then(|v| v.as_str()).unwrap_or("");
-    let up_face = item.pointer("/owner/face").and_then(|v| v.as_str()).unwrap_or("");
+    let up_face = item
+        .pointer("/owner/face")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let rcmd_reason = item
         .pointer("/rcmd_reason/content")
         .and_then(|v| v.as_str())
@@ -414,7 +525,11 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
         bvid: item.get("bvid").and_then(|v| v.as_str())?.to_string(),
         aid: item.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
         cid: item.get("cid").and_then(|v| v.as_i64()).unwrap_or(0),
-        title: item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        title: item
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         pic: proxy_image(pic),
         duration: item.get("duration").and_then(|v| v.as_i64()).unwrap_or(0),
         view: item
@@ -428,7 +543,10 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
             .unwrap_or("")
             .to_string(),
         up_face: proxy_image(up_face),
-        up_mid: item.pointer("/owner/mid").and_then(|v| v.as_i64()).unwrap_or(0),
+        up_mid: item
+            .pointer("/owner/mid")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
         rcmd_reason,
         tname,
         tid,
@@ -437,7 +555,10 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
 
 fn card_from_related_item(item: &Value) -> Option<VideoCard> {
     let pic = item.get("pic").and_then(|v| v.as_str()).unwrap_or("");
-    let up_face = item.pointer("/owner/face").and_then(|v| v.as_str()).unwrap_or("");
+    let up_face = item
+        .pointer("/owner/face")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let tname = item
         .get("tname")
         .and_then(|v| v.as_str())
@@ -447,7 +568,11 @@ fn card_from_related_item(item: &Value) -> Option<VideoCard> {
         bvid: item.get("bvid").and_then(|v| v.as_str())?.to_string(),
         aid: item.get("aid").and_then(|v| v.as_i64()).unwrap_or(0),
         cid: item.get("cid").and_then(|v| v.as_i64()).unwrap_or(0),
-        title: item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        title: item
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         pic: proxy_image(pic),
         duration: item.get("duration").and_then(|v| v.as_i64()).unwrap_or(0),
         view: item
@@ -461,7 +586,10 @@ fn card_from_related_item(item: &Value) -> Option<VideoCard> {
             .unwrap_or("")
             .to_string(),
         up_face: proxy_image(up_face),
-        up_mid: item.pointer("/owner/mid").and_then(|v| v.as_i64()).unwrap_or(0),
+        up_mid: item
+            .pointer("/owner/mid")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
         rcmd_reason: None,
         tname,
         tid,
