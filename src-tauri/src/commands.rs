@@ -455,6 +455,115 @@ pub async fn get_comments(
     })
 }
 
+/// Probe the host for GStreamer hardware video decoder element factories. The
+/// webview (WebKitGTK) routes <video> playback through GStreamer; whether the
+/// pipeline ends up using VA-API / NVDEC / V4L2 etc. depends on which decoder
+/// elements are installed. We can't query the *running* pipeline from JS, but
+/// a presence check on the host gives the user a strong signal about whether
+/// hardware decoding is even possible.
+#[tauri::command]
+pub async fn get_decoder_probe() -> Result<DecoderProbe, String> {
+    // Curated list of decoder element factory names across the common HW backends.
+    // Match against `gst-inspect-1.0` output line by line so we don't false-positive
+    // on substrings inside element descriptions.
+    const KNOWN_HW_DECODERS: &[&str] = &[
+        // gst-plugins-bad VA (GStreamer ≥ 1.18, current Arch default)
+        "vah264dec",
+        "vah265dec",
+        "vavp8dec",
+        "vavp9dec",
+        "vaav1dec",
+        "vampeg2dec",
+        // legacy gstreamer-vaapi
+        "vaapidecode",
+        "vaapidecodebin",
+        "vaapih264dec",
+        "vaapih265dec",
+        "vaapivp8dec",
+        "vaapivp9dec",
+        "vaapiav1dec",
+        "vaapimpeg2dec",
+        // NVIDIA NVDEC
+        "nvh264dec",
+        "nvh264sldec",
+        "nvh265dec",
+        "nvh265sldec",
+        "nvvp8dec",
+        "nvvp9dec",
+        "nvav1dec",
+        // V4L2 stateless (Pi, RK, etc.)
+        "v4l2slh264dec",
+        "v4l2slh265dec",
+        "v4l2slvp8dec",
+        "v4l2slvp9dec",
+        // Intel MSDK
+        "msdkh264dec",
+        "msdkh265dec",
+        "msdkvp9dec",
+        "msdkav1dec",
+        // Direct3D (mostly Windows but listed for completeness)
+        "d3d11h264dec",
+        "d3d11h265dec",
+        "d3d11vp9dec",
+        "d3d11av1dec",
+    ];
+
+    let env_var = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
+
+    let probe = match tokio::process::Command::new("gst-inspect-1.0")
+        .output()
+        .await
+    {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let mut found: Vec<String> = Vec::new();
+            // Lines look like: "<plugin>:  <element>: <description>"
+            for line in stdout.lines() {
+                let Some((_, after_plugin)) = line.split_once(":  ") else {
+                    continue;
+                };
+                let Some((name, _)) = after_plugin.split_once(": ") else {
+                    continue;
+                };
+                let name = name.trim();
+                if KNOWN_HW_DECODERS.contains(&name) && !found.iter().any(|s| s == name) {
+                    found.push(name.to_string());
+                }
+            }
+            DecoderProbe {
+                hw_decoders: found,
+                libva_driver: env_var("LIBVA_DRIVER_NAME"),
+                gst_vaapi_all_drivers: env_var("GST_VAAPI_ALL_DRIVERS"),
+                webkit_disable_compositing: env_var("WEBKIT_DISABLE_COMPOSITING_MODE"),
+                gst_inspect_ok: true,
+                error: None,
+            }
+        }
+        Ok(out) => DecoderProbe {
+            hw_decoders: Vec::new(),
+            libva_driver: env_var("LIBVA_DRIVER_NAME"),
+            gst_vaapi_all_drivers: env_var("GST_VAAPI_ALL_DRIVERS"),
+            webkit_disable_compositing: env_var("WEBKIT_DISABLE_COMPOSITING_MODE"),
+            gst_inspect_ok: false,
+            error: Some(format!(
+                "gst-inspect-1.0 exit {}: {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            )),
+        },
+        Err(e) => DecoderProbe {
+            hw_decoders: Vec::new(),
+            libva_driver: env_var("LIBVA_DRIVER_NAME"),
+            gst_vaapi_all_drivers: env_var("GST_VAAPI_ALL_DRIVERS"),
+            webkit_disable_compositing: env_var("WEBKIT_DISABLE_COMPOSITING_MODE"),
+            gst_inspect_ok: false,
+            error: Some(format!("spawn gst-inspect-1.0: {e}")),
+        },
+    };
+
+    Ok(probe)
+}
+
 /// Map a JSON reply node to our typed Comment. `depth` guards inline-replies
 /// recursion: top-level is 0, nested replies are 1, anything deeper is dropped
 /// (Bilibili only inlines two levels anyway).

@@ -85,6 +85,22 @@ pub struct DashTrack {
     pub index_range: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
+pub struct DecoderProbe {
+    #[serde(default)]
+    pub hw_decoders: Vec<String>,
+    #[serde(default)]
+    pub libva_driver: Option<String>,
+    #[serde(default)]
+    pub gst_vaapi_all_drivers: Option<String>,
+    #[serde(default)]
+    pub webkit_disable_compositing: Option<String>,
+    #[serde(default)]
+    pub gst_inspect_ok: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Danmaku {
     pub progress: f64,

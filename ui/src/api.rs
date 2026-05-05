@@ -169,3 +169,7 @@ pub async fn triple_video(bvid: &str) -> Result<TripleResult, String> {
 pub async fn follow_user(mid: i64, follow: bool) -> Result<(), String> {
     invoke("follow_user", FollowArgs { mid, follow }).await
 }
+
+pub async fn get_decoder_probe() -> Result<DecoderProbe, String> {
+    invoke("get_decoder_probe", NoArgs {}).await
+}

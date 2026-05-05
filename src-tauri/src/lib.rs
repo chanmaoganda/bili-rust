@@ -53,6 +53,7 @@ pub fn run() {
             commands::coin_video,
             commands::triple_video,
             commands::follow_user,
+            commands::get_decoder_probe,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

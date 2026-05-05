@@ -3,6 +3,7 @@ use web_sys::window;
 const KEY_QN: &str = "bili.preferred_qn";
 const KEY_DM_ON: &str = "bili.danmaku_enabled";
 const KEY_DM_OPACITY: &str = "bili.danmaku_opacity";
+const KEY_STATS_HUD: &str = "bili.stats_hud_enabled";
 
 pub fn get_preferred_qn() -> Option<u32> {
     let storage = window()?.local_storage().ok().flatten()?;
@@ -58,4 +59,25 @@ pub fn set_danmaku_opacity(v: f64) {
         return;
     };
     let _ = storage.set_item(KEY_DM_OPACITY, &v.clamp(0.2, 1.0).to_string());
+}
+
+pub fn get_stats_hud_enabled() -> bool {
+    let Some(w) = window() else { return false };
+    let Ok(Some(storage)) = w.local_storage() else {
+        return false;
+    };
+    storage
+        .get_item(KEY_STATS_HUD)
+        .ok()
+        .flatten()
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+pub fn set_stats_hud_enabled(on: bool) {
+    let Some(w) = window() else { return };
+    let Ok(Some(storage)) = w.local_storage() else {
+        return;
+    };
+    let _ = storage.set_item(KEY_STATS_HUD, if on { "1" } else { "0" });
 }

@@ -5,6 +5,7 @@
 use crate::api;
 use crate::components::comments::Comments;
 use crate::components::danmaku::DanmakuOverlay;
+use crate::components::stats_hud::StatsHud;
 use crate::components::player::Player;
 use crate::components::video_card::VideoCardView;
 use crate::keys::{is_typing, KeydownGuard};
@@ -57,6 +58,7 @@ pub fn Watch() -> impl IntoView {
     let shell_sig = RwSignal::<Option<Element>>::new(None);
     let dm_enabled = RwSignal::new(crate::prefs::get_danmaku_enabled());
     let dm_opacity = RwSignal::new(crate::prefs::get_danmaku_opacity());
+    let stats_hud_enabled = RwSignal::new(crate::prefs::get_stats_hud_enabled());
     let danmaku_cid = Signal::derive(move || {
         // Guard against stale PlayInfo during a bvid switch: LocalResource keeps
         // returning the previous Ok value while refetching, which would let the
@@ -411,6 +413,7 @@ pub fn Watch() -> impl IntoView {
                                 .collect();
                             let current = info.current_quality;
                             let start = resume_at.get_untracked();
+                            let info_for_hud = info.clone();
                             let shell_ref = NodeRef::<leptos::html::Div>::new();
                             Effect::new(move |_| {
                                 if let Some(el) = shell_ref.get() {
@@ -433,6 +436,9 @@ pub fn Watch() -> impl IntoView {
                                         enabled=dm_enabled.into()
                                         opacity=dm_opacity.into()
                                     />
+                                    {move || stats_hud_enabled.get().then(|| view! {
+                                        <StatsHud video=video_sig info=info_for_hud.clone() />
+                                    })}
                                 </div>
                                 <div class="player-bar">
                                     <h1>{title_view}</h1>
@@ -445,6 +451,17 @@ pub fn Watch() -> impl IntoView {
                                         }
                                     >
                                         {move || if dm_enabled.get() { "弹幕 开" } else { "弹幕 关" }}
+                                    </button>
+                                    <button
+                                        class="stats-toggle"
+                                        title="解码诊断面板"
+                                        on:click=move |_| {
+                                            let next = !stats_hud_enabled.get();
+                                            crate::prefs::set_stats_hud_enabled(next);
+                                            stats_hud_enabled.set(next);
+                                        }
+                                    >
+                                        {move || if stats_hud_enabled.get() { "Stats 开" } else { "Stats 关" }}
                                     </button>
                                     <input
                                         class="dm-opacity"
