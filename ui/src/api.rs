@@ -198,6 +198,77 @@ pub async fn get_space_videos(mid: i64, pn: u32, ps: u32) -> Result<SpaceVideoPa
     invoke("get_space_videos", SpaceVideosArgs { mid, pn, ps }).await
 }
 
+#[derive(Serialize)]
+struct HeartbeatArgs<'a> {
+    bvid: &'a str,
+    aid: i64,
+    cid: i64,
+    #[serde(rename = "playedTime")]
+    played_time: i64,
+    duration: i64,
+    #[serde(rename = "playType")]
+    play_type: u8,
+}
+
+pub async fn report_heartbeat(
+    bvid: &str,
+    aid: i64,
+    cid: i64,
+    played_time: i64,
+    duration: i64,
+    play_type: u8,
+) -> Result<(), String> {
+    invoke(
+        "report_heartbeat",
+        HeartbeatArgs { bvid, aid, cid, played_time, duration, play_type },
+    )
+    .await
+}
+
+#[derive(Serialize)]
+struct HistoryArgs {
+    max: i64,
+    #[serde(rename = "viewAt")]
+    view_at: i64,
+}
+
+#[derive(Serialize)]
+struct AidArgs {
+    aid: i64,
+}
+
+pub async fn get_history(max: i64, view_at: i64) -> Result<HistoryPage, String> {
+    invoke("get_history", HistoryArgs { max, view_at }).await
+}
+
+pub async fn delete_history(aid: i64) -> Result<(), String> {
+    invoke("delete_history", AidArgs { aid }).await
+}
+
+pub async fn clear_history() -> Result<(), String> {
+    invoke("clear_history", NoArgs {}).await
+}
+
+pub async fn get_toview() -> Result<ToviewPage, String> {
+    invoke("get_toview", NoArgs {}).await
+}
+
+pub async fn add_toview(bvid: &str) -> Result<(), String> {
+    invoke("add_toview", BvidArgs { bvid }).await
+}
+
+pub async fn delete_toview(aid: i64) -> Result<(), String> {
+    invoke("delete_toview", AidArgs { aid }).await
+}
+
+pub async fn delete_viewed_toview() -> Result<(), String> {
+    invoke("delete_viewed_toview", NoArgs {}).await
+}
+
+pub async fn clear_toview() -> Result<(), String> {
+    invoke("clear_toview", NoArgs {}).await
+}
+
 pub async fn qr_login_start() -> Result<QrStart, String> {
     invoke("qr_login_start", NoArgs {}).await
 }

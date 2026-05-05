@@ -1,7 +1,9 @@
 use crate::components::header::Header;
+use crate::routes::history::History;
 use crate::routes::home::Home;
 use crate::routes::login::Login;
 use crate::routes::space::Space;
+use crate::routes::toview::Toview;
 use crate::routes::watch::Watch;
 use crate::state::{LoginVersion, RecommendState};
 use leptos::prelude::*;
@@ -22,6 +24,8 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/watch/:bvid") view=Watch />
                     <Route path=path!("/login") view=Login />
                     <Route path=path!("/space/:mid") view=Space />
+                    <Route path=path!("/history") view=History />
+                    <Route path=path!("/toview") view=Toview />
                 </Routes>
             </main>
         </Router>

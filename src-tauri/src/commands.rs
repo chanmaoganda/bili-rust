@@ -36,6 +36,29 @@ pub struct VideoCard {
     pub rcmd_reason: Option<String>,
     pub tname: Option<String>,
     pub tid: Option<i64>,
+    /// Unix seconds of last watch (history only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub view_at: Option<i64>,
+    /// Unix seconds when added to Watch Later (toview only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub add_at: Option<i64>,
+    /// Seconds watched into the video; -1 means finished.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct HistoryPage {
+    pub list: Vec<VideoCard>,
+    pub cursor_max: i64,
+    pub cursor_view_at: i64,
+    pub has_more: bool,
+}
+
+#[derive(Serialize)]
+pub struct ToviewPage {
+    pub count: i32,
+    pub list: Vec<VideoCard>,
 }
 
 #[derive(Serialize)]
@@ -494,6 +517,136 @@ pub async fn get_space_videos(
     })
 }
 
+#[tauri::command]
+pub async fn report_heartbeat(
+    state: BiliState<'_>,
+    bvid: String,
+    aid: i64,
+    cid: i64,
+    played_time: i64,
+    duration: i64,
+    play_type: u8,
+) -> Result<(), String> {
+    state
+        .report_heartbeat(aid, cid, &bvid, played_time, duration, play_type)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn get_history(
+    state: BiliState<'_>,
+    max: i64,
+    view_at: i64,
+) -> Result<HistoryPage, String> {
+    let raw = state
+        .history_cursor(max, view_at, "archive", 20)
+        .await
+        .map_err(err)?;
+    let list: Vec<VideoCard> = raw
+        .list
+        .iter()
+        .filter(|it| it.history.business == "archive" && !it.history.bvid.is_empty())
+        .map(|it| VideoCard {
+            bvid: it.history.bvid.clone(),
+            aid: it.history.oid,
+            cid: it.history.cid,
+            title: it.title.clone(),
+            pic: proxy_image(&it.cover),
+            duration: it.duration,
+            view: 0,
+            up_name: it.author_name.clone(),
+            up_face: String::new(),
+            up_mid: it.author_mid,
+            rcmd_reason: None,
+            tname: if it.tag_name.is_empty() {
+                None
+            } else {
+                Some(it.tag_name.clone())
+            },
+            tid: None,
+            view_at: Some(it.view_at),
+            add_at: None,
+            progress: Some(it.progress),
+        })
+        .collect();
+    let has_more = !raw.list.is_empty() && raw.cursor.max != 0;
+    Ok(HistoryPage {
+        list,
+        cursor_max: raw.cursor.max,
+        cursor_view_at: raw.cursor.view_at,
+        has_more,
+    })
+}
+
+#[tauri::command]
+pub async fn delete_history(state: BiliState<'_>, aid: i64) -> Result<(), String> {
+    state
+        .history_delete(&format!("archive_{aid}"))
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn clear_history(state: BiliState<'_>) -> Result<(), String> {
+    state.history_clear().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn get_toview(state: BiliState<'_>) -> Result<ToviewPage, String> {
+    let raw = state.toview_list().await.map_err(err)?;
+    let list: Vec<VideoCard> = raw
+        .list
+        .into_iter()
+        .map(|it| VideoCard {
+            bvid: it.bvid,
+            aid: it.aid,
+            cid: it.cid,
+            title: it.title,
+            pic: proxy_image(&it.pic),
+            duration: it.duration,
+            view: it.stat.view,
+            up_name: it.owner.name,
+            up_face: proxy_image(&it.owner.face),
+            up_mid: it.owner.mid,
+            rcmd_reason: None,
+            tname: if it.tname.is_empty() {
+                None
+            } else {
+                Some(it.tname)
+            },
+            tid: None,
+            view_at: None,
+            add_at: Some(it.add_at),
+            progress: Some(it.progress),
+        })
+        .collect();
+    Ok(ToviewPage {
+        count: raw.count,
+        list,
+    })
+}
+
+#[tauri::command]
+pub async fn add_toview(state: BiliState<'_>, bvid: String) -> Result<(), String> {
+    state.toview_add(&bvid).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn delete_toview(state: BiliState<'_>, aid: i64) -> Result<(), String> {
+    state.toview_del(aid).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn delete_viewed_toview(state: BiliState<'_>) -> Result<(), String> {
+    state.toview_del_viewed().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn clear_toview(state: BiliState<'_>) -> Result<(), String> {
+    state.toview_clear().await.map_err(err)
+}
+
 #[derive(Serialize)]
 pub struct QrStart {
     pub url: String,
@@ -878,6 +1031,9 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
         rcmd_reason,
         tname,
         tid,
+        view_at: None,
+        add_at: None,
+        progress: None,
     })
 }
 
@@ -927,6 +1083,9 @@ fn card_from_space_item(item: &Value, fallback_mid: i64) -> Option<VideoCard> {
             })
             .filter(|s| !s.is_empty()),
         tid: item.get("typeid").and_then(|v| v.as_i64()),
+        view_at: None,
+        add_at: None,
+        progress: None,
     })
 }
 
@@ -979,5 +1138,8 @@ fn card_from_related_item(item: &Value) -> Option<VideoCard> {
         rcmd_reason: None,
         tname,
         tid,
+        view_at: None,
+        add_at: None,
+        progress: None,
     })
 }

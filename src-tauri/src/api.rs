@@ -615,6 +615,197 @@ impl Bili {
         })
     }
 
+    /// /x/click-interface/web/heartbeat — report playback progress so the
+    /// server records this video in the user's watch history. Bilibili's web
+    /// player fires this every 15s during playback (and once on start). Without
+    /// it, videos played through this client never appear in /history.
+    pub async fn report_heartbeat(
+        &self,
+        aid: i64,
+        cid: i64,
+        bvid: &str,
+        played_time: i64,
+        duration: i64,
+        play_type: u8,
+    ) -> Result<()> {
+        let csrf = self.session().cookies.csrf.clone();
+        let mid = self.session().cookies.uid.clone();
+        let mut form = BTreeMap::new();
+        form.insert("aid", aid.to_string());
+        form.insert("cid", cid.to_string());
+        form.insert("bvid", bvid.to_string());
+        form.insert("played_time", played_time.to_string());
+        form.insert("realtime", played_time.to_string());
+        form.insert("video_duration", duration.to_string());
+        form.insert("type", "3".to_string());
+        form.insert("sub_type", "0".to_string());
+        form.insert("dt", "2".to_string());
+        form.insert("play_type", play_type.to_string());
+        if !mid.is_empty() {
+            form.insert("mid", mid);
+        }
+        if !csrf.is_empty() {
+            form.insert("csrf", csrf);
+        }
+        // Heartbeat returns code=0 even for guests; only fail on transport errors.
+        let v: ApiEnvelope<Value> = self
+            .http()
+            .post("https://api.bilibili.com/x/click-interface/web/heartbeat")
+            .form(&form)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!(
+                "heartbeat failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
+        }
+        Ok(())
+    }
+
+    /// /x/web-interface/history/cursor — paginated watch history.
+    ///
+    /// Cursor pagination: pass `max=0` and `view_at=0` for the first page; on
+    /// subsequent pages echo `cursor.max` and `cursor.view_at` from the prior
+    /// response. We pin `business="archive"` so every row opens in our
+    /// /watch/:bvid view (live/bangumi/article rows would need different routes).
+    pub async fn history_cursor(
+        &self,
+        max: i64,
+        view_at: i64,
+        business: &str,
+        ps: u32,
+    ) -> Result<HistoryRaw> {
+        let v: ApiEnvelope<HistoryRaw> = self
+            .http()
+            .get("https://api.bilibili.com/x/web-interface/history/cursor")
+            .query(&[
+                ("max", max.to_string()),
+                ("view_at", view_at.to_string()),
+                ("business", business.to_string()),
+                ("ps", ps.to_string()),
+            ])
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!(
+                "history_cursor failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
+        }
+        v.data
+            .ok_or_else(|| anyhow!("history_cursor: no data"))
+    }
+
+    /// /x/v2/history/delete — remove one history entry. `kid` is the
+    /// `"<business>_<id>"` form Bilibili expects (e.g. `"archive_540580868"`).
+    pub async fn history_delete(&self, kid: &str) -> Result<()> {
+        let csrf = self.session().cookies.csrf.clone();
+        let mut form = BTreeMap::new();
+        form.insert("kid", kid.to_string());
+        form.insert("csrf", csrf);
+        self.post_form(
+            "https://api.bilibili.com/x/v2/history/delete",
+            form,
+            "history_delete",
+        )
+        .await
+    }
+
+    /// /x/v2/history/clear — wipe all history.
+    pub async fn history_clear(&self) -> Result<()> {
+        let csrf = self.session().cookies.csrf.clone();
+        let mut form = BTreeMap::new();
+        form.insert("csrf", csrf);
+        self.post_form(
+            "https://api.bilibili.com/x/v2/history/clear",
+            form,
+            "history_clear",
+        )
+        .await
+    }
+
+    /// /x/v2/history/toview — full Watch Later list (server caps at 100 items).
+    pub async fn toview_list(&self) -> Result<ToviewRaw> {
+        let v: ApiEnvelope<ToviewRaw> = self
+            .http()
+            .get("https://api.bilibili.com/x/v2/history/toview")
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!(
+                "toview_list failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
+        }
+        // Empty list returns data: null on some accounts.
+        Ok(v.data.unwrap_or_default())
+    }
+
+    /// /x/v2/history/toview/add — add by bvid.
+    pub async fn toview_add(&self, bvid: &str) -> Result<()> {
+        let csrf = self.session().cookies.csrf.clone();
+        let mut form = BTreeMap::new();
+        form.insert("bvid", bvid.to_string());
+        form.insert("csrf", csrf);
+        self.post_form(
+            "https://api.bilibili.com/x/v2/history/toview/add",
+            form,
+            "toview_add",
+        )
+        .await
+    }
+
+    /// /x/v2/history/toview/del — remove one entry by aid.
+    pub async fn toview_del(&self, aid: i64) -> Result<()> {
+        let csrf = self.session().cookies.csrf.clone();
+        let mut form = BTreeMap::new();
+        form.insert("aid", aid.to_string());
+        form.insert("csrf", csrf);
+        self.post_form(
+            "https://api.bilibili.com/x/v2/history/toview/del",
+            form,
+            "toview_del",
+        )
+        .await
+    }
+
+    /// /x/v2/history/toview/del with `viewed=true` — purge already-watched.
+    pub async fn toview_del_viewed(&self) -> Result<()> {
+        let csrf = self.session().cookies.csrf.clone();
+        let mut form = BTreeMap::new();
+        form.insert("viewed", "true".to_string());
+        form.insert("csrf", csrf);
+        self.post_form(
+            "https://api.bilibili.com/x/v2/history/toview/del",
+            form,
+            "toview_del_viewed",
+        )
+        .await
+    }
+
+    /// /x/v2/history/toview/clear — empty the Watch Later list.
+    pub async fn toview_clear(&self) -> Result<()> {
+        let csrf = self.session().cookies.csrf.clone();
+        let mut form = BTreeMap::new();
+        form.insert("csrf", csrf);
+        self.post_form(
+            "https://api.bilibili.com/x/v2/history/toview/clear",
+            form,
+            "toview_clear",
+        )
+        .await
+    }
+
     /// /x/space/wbi/arc/search — paginated list of a user's published videos.
     pub async fn space_videos(&self, mid: i64, pn: u32, ps: u32) -> Result<Value> {
         let keys = self.wbi_keys().await?;
@@ -784,4 +975,92 @@ pub struct SpaceInfoData {
     pub top_photo: String,
     pub following: i64,
     pub follower: i64,
+}
+
+#[derive(Deserialize, Default)]
+pub struct HistoryRaw {
+    #[serde(default)]
+    pub cursor: HistoryCursor,
+    #[serde(default)]
+    pub list: Vec<HistoryRawItem>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct HistoryCursor {
+    #[serde(default)]
+    pub max: i64,
+    #[serde(default)]
+    pub view_at: i64,
+    #[serde(default)]
+    pub business: String,
+    #[serde(default)]
+    pub ps: i64,
+}
+
+#[derive(Deserialize, Default)]
+pub struct HistoryRawItem {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub cover: String,
+    #[serde(default)]
+    pub author_name: String,
+    #[serde(default)]
+    pub author_mid: i64,
+    #[serde(default)]
+    pub tag_name: String,
+    #[serde(default)]
+    pub duration: i64,
+    #[serde(default)]
+    pub view_at: i64,
+    #[serde(default)]
+    pub progress: i64,
+    #[serde(default)]
+    pub history: HistoryInner,
+}
+
+#[derive(Deserialize, Default)]
+pub struct HistoryInner {
+    #[serde(default)]
+    pub oid: i64,
+    #[serde(default)]
+    pub bvid: String,
+    #[serde(default)]
+    pub cid: i64,
+    #[serde(default)]
+    pub business: String,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ToviewRaw {
+    #[serde(default)]
+    pub count: i32,
+    #[serde(default)]
+    pub list: Vec<ToviewRawItem>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ToviewRawItem {
+    #[serde(default)]
+    pub aid: i64,
+    #[serde(default)]
+    pub bvid: String,
+    #[serde(default)]
+    pub cid: i64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub pic: String,
+    #[serde(default)]
+    pub tname: String,
+    #[serde(default)]
+    pub duration: i64,
+    #[serde(default)]
+    pub add_at: i64,
+    #[serde(default)]
+    pub progress: i64,
+    #[serde(default)]
+    pub owner: ViewOwner,
+    #[serde(default)]
+    pub stat: ViewStat,
 }

@@ -20,6 +20,9 @@ header.app {
   border-bottom: 1px solid #222732; position: sticky; top: 0; z-index: 10;
 }
 header.app .brand { font-weight: 700; color: var(--accent); }
+header.app .top-nav { display: flex; align-items: center; gap: 18px; font-size: 14px; }
+header.app .nav-link { color: var(--muted); padding: 4px 8px; border-radius: 6px; }
+header.app .nav-link:hover { color: var(--accent); background: rgba(255,255,255,0.04); }
 header.app .me { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 14px; }
 header.app .me img { width: 32px; height: 32px; border-radius: 50%; }
 

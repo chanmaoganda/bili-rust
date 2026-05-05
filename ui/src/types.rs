@@ -26,6 +26,29 @@ pub struct VideoCard {
     pub tname: Option<String>,
     #[serde(default)]
     pub tid: Option<i64>,
+    /// Unix seconds of last watch (history only).
+    #[serde(default)]
+    pub view_at: Option<i64>,
+    /// Unix seconds when added to Watch Later (toview only).
+    #[serde(default)]
+    pub add_at: Option<i64>,
+    /// Seconds watched into the video; -1 means finished.
+    #[serde(default)]
+    pub progress: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct HistoryPage {
+    pub list: Vec<VideoCard>,
+    pub cursor_max: i64,
+    pub cursor_view_at: i64,
+    pub has_more: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ToviewPage {
+    pub count: i32,
+    pub list: Vec<VideoCard>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

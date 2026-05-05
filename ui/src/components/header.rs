@@ -19,6 +19,10 @@ pub fn Header() -> impl IntoView {
             <A href="/">
                 <span class="brand">"Bili (Rust)"</span>
             </A>
+            <nav class="top-nav">
+                <A href="/history"><span class="nav-link">"历史"</span></A>
+                <A href="/toview"><span class="nav-link">"稍后再看"</span></A>
+            </nav>
             <div class="me">
                 {move || {
                     user.get()

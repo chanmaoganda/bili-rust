@@ -21,10 +21,15 @@ pub fn VideoCardView(
     #[prop(optional, into)]
     on_dislike: Option<Callback<(VideoCard, DislikeReason)>>,
 ) -> impl IntoView {
-    let href = if card.cid != 0 {
-        format!("/watch/{}?cid={}", card.bvid, card.cid)
-    } else {
-        format!("/watch/{}", card.bvid)
+    // If the row carries a saved progress (history / toview), append `?t=` so
+    // the watch route resumes at that position. Bilibili's `progress` is -1
+    // when the video was finished — skip those.
+    let resume_t = card.progress.filter(|p| *p > 0);
+    let href = match (card.cid != 0, resume_t) {
+        (true, Some(t)) => format!("/watch/{}?cid={}&t={}", card.bvid, card.cid, t),
+        (true, None) => format!("/watch/{}?cid={}", card.bvid, card.cid),
+        (false, Some(t)) => format!("/watch/{}?t={}", card.bvid, t),
+        (false, None) => format!("/watch/{}", card.bvid),
     };
     let menu_open = RwSignal::new(false);
 

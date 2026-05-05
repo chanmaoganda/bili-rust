@@ -14,8 +14,24 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
 use leptos_router::hooks::{use_params_map, use_query_map};
+use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlInputElement, HtmlSelectElement, HtmlVideoElement, KeyboardEvent};
+
+/// Wraps a `setInterval` ID + its closure so the interval is cleared when the
+/// guard is dropped (route unmount, bvid change, etc.).
+struct IntervalGuard {
+    id: i32,
+    _closure: Closure<dyn FnMut()>,
+}
+
+impl Drop for IntervalGuard {
+    fn drop(&mut self) {
+        if let Some(win) = web_sys::window() {
+            win.clear_interval_with_handle(self.id);
+        }
+    }
+}
 
 #[component]
 pub fn Watch() -> impl IntoView {
@@ -29,11 +45,22 @@ pub fn Watch() -> impl IntoView {
     let qn = RwSignal::new(crate::prefs::get_preferred_qn());
     let resume_at = RwSignal::new(0.0_f64);
 
-    // Reset resume position when navigating to a different video, and re-apply
-    // the saved quality preference so it survives across videos.
+    // Resume position when arriving with `?t=<seconds>` (e.g. clicked from
+    // /history). Falls back to 0 for fresh watches. Bilibili's `progress` is
+    // -1 when finished — VideoCardView filters that out before linking.
+    let t_resume = Signal::derive(move || {
+        query
+            .read()
+            .get("t")
+            .and_then(|s| s.parse::<f64>().ok())
+            .filter(|t| *t > 0.0)
+    });
+
+    // Reset resume position when navigating to a different video, seeding from
+    // t_resume so /history clicks jump to the saved progress on first frame.
     Effect::new(move |_| {
         let _ = bvid.get();
-        resume_at.set(0.0);
+        resume_at.set(t_resume.get().unwrap_or(0.0));
         qn.set(crate::prefs::get_preferred_qn());
     });
 
@@ -96,6 +123,12 @@ pub fn Watch() -> impl IntoView {
     let coin_count = RwSignal::new(1u8);
     let coin_with_like = RwSignal::new(true);
 
+    // Local-only "added to Watch Later this session" flag — there's no upstream
+    // query for membership, so we just flip on successful add and reset on bvid
+    // change. A duplicate add returns code 11005 which we surface as an error.
+    let wl_added = RwSignal::new(false);
+    let wl_pending = RwSignal::new(false);
+
     // up_mid: prefer view_info (authoritative) and fall back to play info.
     let up_mid = Signal::derive(move || {
         view_info
@@ -120,6 +153,7 @@ pub fn Watch() -> impl IntoView {
         coin_delta.set(0);
         fav_delta.set(0);
         coin_open.set(false);
+        wl_added.set(false);
     });
 
     // Fetch fresh action state whenever (bvid, up_mid) changes. We bridge the
@@ -300,6 +334,80 @@ pub fn Watch() -> impl IntoView {
                 action.update(|a| a.followed = !next);
             }
         });
+    });
+
+    let do_watch_later = Callback::new(move |_: ()| {
+        if wl_pending.get_untracked() || wl_added.get_untracked() {
+            return;
+        }
+        let bv = bvid.get_untracked();
+        if bv.is_empty() {
+            return;
+        }
+        wl_pending.set(true);
+        spawn_local(async move {
+            match api::add_toview(&bv).await {
+                Ok(()) => wl_added.set(true),
+                Err(e) => {
+                    web_sys::console::error_1(&format!("add_toview: {e}").into());
+                }
+            }
+            wl_pending.set(false);
+        });
+    });
+
+    // Watch-history heartbeat. Bilibili's history list is populated by periodic
+    // POSTs to /x/click-interface/web/heartbeat — without these, videos played
+    // through this client would never show up in /history. Cadence (15s) and
+    // play_type semantics mirror what the official web player sends.
+    Effect::new(move |_prev: Option<Option<IntervalGuard>>| -> Option<IntervalGuard> {
+        let video = video_sig.get()?;
+        let info = view_info.get().and_then(|r| r.ok())?;
+        let bv = bvid.get();
+        if info.bvid != bv {
+            return None; // stale view_info from the previous video
+        }
+        let aid = info.aid;
+        let cid = info.cid;
+        let duration = info.duration;
+
+        // play_type=1 = playback started. Fire once when the player first appears.
+        {
+            let bv0 = bv.clone();
+            spawn_local(async move {
+                if let Err(e) = api::report_heartbeat(&bv0, aid, cid, 0, duration, 1).await {
+                    web_sys::console::warn_1(&format!("heartbeat start: {e}").into());
+                }
+            });
+        }
+
+        let video_inner = video.clone();
+        let bv_inner = bv.clone();
+        let closure = Closure::<dyn FnMut()>::new(move || {
+            // Skip while paused — Bilibili's player does the same.
+            if video_inner.paused() {
+                return;
+            }
+            let played = video_inner.current_time() as i64;
+            let bv = bv_inner.clone();
+            spawn_local(async move {
+                if let Err(e) =
+                    api::report_heartbeat(&bv, aid, cid, played, duration, 0).await
+                {
+                    web_sys::console::warn_1(&format!("heartbeat: {e}").into());
+                }
+            });
+        });
+
+        let win = web_sys::window()?;
+        let id = win
+            .set_interval_with_callback_and_timeout_and_arguments_0(
+                closure.as_ref().unchecked_ref(),
+                15_000,
+            )
+            .ok()?;
+
+        Some(IntervalGuard { id, _closure: closure })
     });
 
     // Global keyboard shortcuts for the watch page. Re-installs whenever the
@@ -592,6 +700,16 @@ pub fn Watch() -> impl IntoView {
                                     >
                                         <span class="icon">"⭐"</span>
                                         <span>"三连"</span>
+                                    </button>
+                                    <button
+                                        class="act act-wl"
+                                        class:is-active=move || wl_added.get()
+                                        prop:disabled=move || (wl_pending.get() || wl_added.get())
+                                        title="加入稍后再看"
+                                        on:click=move |_| do_watch_later.run(())
+                                    >
+                                        <span class="icon">"⏱"</span>
+                                        <span>{move || if wl_added.get() { "已添加" } else { "稍后再看" }}</span>
                                     </button>
                                 </div>
                                 <div class="up">
