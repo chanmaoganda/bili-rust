@@ -19,10 +19,12 @@ use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlInputElement, HtmlSelectElement, HtmlVideoElement, KeyboardEvent};
 
 /// Wraps a `setInterval` ID + its closure so the interval is cleared when the
-/// guard is dropped (route unmount, bvid change, etc.).
+/// guard is dropped (route unmount, bvid change, etc.). Optionally also owns a
+/// `seeked` listener on the same video so both go away together.
 struct IntervalGuard {
     id: i32,
     _closure: Closure<dyn FnMut()>,
+    _seek: Option<SeekListenerGuard>,
 }
 
 impl Drop for IntervalGuard {
@@ -30,6 +32,23 @@ impl Drop for IntervalGuard {
         if let Some(win) = web_sys::window() {
             win.clear_interval_with_handle(self.id);
         }
+    }
+}
+
+/// Detaches a `seeked` listener from a video element on drop. Without this,
+/// switching videos would keep the previous video's listener wired up,
+/// which both leaks the closure and posts heartbeats for the wrong video.
+struct SeekListenerGuard {
+    video: HtmlVideoElement,
+    closure: Closure<dyn FnMut(web_sys::Event)>,
+}
+
+impl Drop for SeekListenerGuard {
+    fn drop(&mut self) {
+        let _ = self.video.remove_event_listener_with_callback(
+            "seeked",
+            self.closure.as_ref().unchecked_ref(),
+        );
     }
 }
 
@@ -478,7 +497,40 @@ pub fn Watch() -> impl IntoView {
             )
             .ok()?;
 
-        Some(IntervalGuard { id, _closure: closure })
+        // Fire a heartbeat as soon as the user finishes a seek so the server's
+        // recorded position tracks the scrub bar instead of lagging by up to
+        // 15s. The browser only emits `seeked` once the new position is
+        // settled, so rapid scrubbing back and forth still yields one POST per
+        // settle, not one per pixel of drag.
+        let video_for_seek = video.clone();
+        let bv_for_seek = bv.clone();
+        let seek_closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_ev| {
+            let played = video_for_seek.current_time() as i64;
+            let bv = bv_for_seek.clone();
+            spawn_local(async move {
+                if let Err(e) =
+                    api::report_heartbeat(&bv, aid, cid, played, duration, 0).await
+                {
+                    web_sys::console::warn_1(&format!("heartbeat seek: {e}").into());
+                }
+            });
+        });
+        let seek_guard = video
+            .add_event_listener_with_callback(
+                "seeked",
+                seek_closure.as_ref().unchecked_ref(),
+            )
+            .ok()
+            .map(|_| SeekListenerGuard {
+                video: video.clone(),
+                closure: seek_closure,
+            });
+
+        Some(IntervalGuard {
+            id,
+            _closure: closure,
+            _seek: seek_guard,
+        })
     });
 
     // Global keyboard shortcuts for the watch page. Re-installs whenever the
