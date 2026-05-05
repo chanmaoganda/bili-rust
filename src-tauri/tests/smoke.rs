@@ -17,7 +17,7 @@ async fn nav_returns_logged_in() {
     let bili = Bili::new(cookies).expect("client");
     let nav = bili.nav().await.expect("nav");
     println!("isLogin={} uname={} mid={}", nav.data.is_login, nav.data.uname, nav.data.mid);
-    assert!(nav.data.is_login, "cookies are stale — re-run `node login.js`");
+    assert!(nav.data.is_login, "cookies are stale — log in again via the app's /login route");
 }
 
 #[tokio::test]

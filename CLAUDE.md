@@ -25,7 +25,7 @@ The release profile in the workspace `Cargo.toml` uses `lto = true`, `codegen-un
 | UI dev server only | `cd ui && trunk serve --port 1420` |
 | Backend type-check | `cargo check -p bili-rust` (or `cd src-tauri && cargo check`) |
 | Live integration smoke test | `cargo test --test smoke -- --ignored --nocapture` (requires valid `cookies.json`) |
-| Refresh login cookies | `node login.js` (Playwright QR flow → writes `cookies.json`) |
+| Refresh login cookies | Launch the app and visit `/login` — the in-app QR flow writes `cookies.json` |
 
 `cargo tauri dev`/`build` auto-runs the Trunk step via `tauri.conf.json`'s `beforeDevCommand`/`beforeBuildCommand` — don't run Trunk separately unless iterating on the UI in isolation.
 
@@ -40,7 +40,7 @@ Prereqs: `rustup target add wasm32-unknown-unknown`, `cargo install trunk tauri-
 - `commands.rs` — `#[tauri::command]`s grouped by purpose: **read** (`get_user_info`, `get_rcmd`, `get_related`, `get_play_info`, `get_view_info`, `get_danmaku`, `get_comments`, `get_action_state`), **write** (`like_video`, `coin_video`, `triple_video`, `follow_user`, `feed_dislike`), and **diagnostics** (`get_decoder_probe`). All return `Result<_, String>` (errors stringified at the Tauri boundary). Register new commands in `lib.rs`'s `invoke_handler!`.
 - `wbi.rs` — Bilibili WBI signature scheme (mixin-key permutation + `wts`/`w_rid`). **Most endpoints reject unsigned requests with HTTP 412** — always sign via `Bili`'s helpers, don't hand-build query strings.
 - `stream.rs` — Async URI scheme handler. Rewrites HTTPS DASH segment URLs to `bilistream://seg/<base64>` and image URLs to `biliimg://img/<base64>` so the frontend can embed them without CSP violations. The handler proxies the actual HTTPS fetch through `Bili` so Bilibili CDN's `Referer`/`Origin` requirements are met.
-- `cookies.rs` — Reads `cookies.json` at startup (path overridable via `BILI_COOKIES`). **No hot-reload**: re-running `login.js` requires restarting the app.
+- `cookies.rs` — Reads `cookies.json` at startup (path overridable via `BILI_COOKIES`). The in-app QR flow (`commands::qr_login_poll` → `Bili::replace_cookies`) writes `cookies.json` and swaps the in-memory session atomically, so re-login does not require an app restart.
 - `danmaku.rs` — Parses Bilibili's `list.so` XML response, auto-detecting raw deflate vs. pre-inflated payloads.
 
 ### Frontend (`ui/src/`)
@@ -58,7 +58,7 @@ Prereqs: `rustup target add wasm32-unknown-unknown`, `cargo install trunk tauri-
 - **WBI signing is mandatory** for nav/recommend/related/play/search endpoints. Add a new endpoint? Route it through `Bili` so it inherits `wbi::sign()`.
 - **Custom URI schemes are not optional.** `tauri.conf.json`'s CSP lists `bilistream:` under `media-src` and `biliimg:` under `img-src`; raw HTTPS Bilibili URLs in `<video>` / `<img>` will be blocked. Always rewrite via the helpers in `stream.rs` / `commands.rs::proxy_image`.
 - **Dash.js teardown.** Any change to `components/player.rs` must keep `on_cleanup()` calling the JS teardown before Leptos drops the node.
-- **Cookies are read once at startup.** `login.js` drives a CDP-controlled browser via Playwright to walk the QR-login flow, renders the QR to the terminal with `qrcode-terminal`, and writes `cookies.json` at the repo root. After re-login, restart the Tauri app — there is no hot-reload.
+- **Login is in-app.** With no `cookies.json` present the app boots into `/login` (`ui/src/routes/login.rs`), which calls `qr_login_start` / `qr_login_poll`; on confirm the backend writes `cookies.json` and `replace_cookies` swaps the live session in place. The header reacts via the `LoginVersion` context (`ui/src/state.rs`), so no restart is needed.
 - **Logging.** `tracing_subscriber` honors `RUST_LOG`; the default filter is `info,bili_rust_lib=debug`. Bump to e.g. `RUST_LOG=bili_rust_lib=trace` when diagnosing WBI/sign failures.
 - **Quality preference round-trip.** UI must call `set_preferred_qn()` after the user picks a quality, otherwise the next session falls back to the default.
 - **Write endpoints want the full web-client form.** Bilibili's risk-control rejects `/x/relation/modify` (and similar) when the bare `fid`/`act`/`csrf` form is sent — add `re_src`, `gaia_source`, `spmid`, `extend_content` to mirror what `bilibili.com` posts. `like_video`/`coin_video` happen to escape this today; assume new write endpoints will not.
