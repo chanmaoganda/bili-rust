@@ -23,7 +23,7 @@ The release profile in the workspace `Cargo.toml` uses `lto = true`, `codegen-un
 | Release binary, no installers | `cargo tauri build --no-bundle` |
 | UI alone (WASM → `ui/dist/`) | `cd ui && trunk build --release` |
 | UI dev server only | `cd ui && trunk serve --port 1420` |
-| Backend type-check | `cargo check -p bili-rust-lib` |
+| Backend type-check | `cargo check -p bili-rust` (or `cd src-tauri && cargo check`) |
 | Live integration smoke test | `cargo test --test smoke -- --ignored --nocapture` (requires valid `cookies.json`) |
 | Refresh login cookies | `node login.js` (Playwright QR flow → writes `cookies.json`) |
 
@@ -37,7 +37,7 @@ Prereqs: `rustup target add wasm32-unknown-unknown`, `cargo install trunk tauri-
 
 - `lib.rs` — `run()` is the Tauri entry point. Loads `cookies.json` once at startup, builds an `Arc<Bili>` HTTP client, registers the `bilistream://` and `biliimg://` URI scheme handlers, and exposes commands.
 - `api.rs` — `Bili` struct wraps a singleton `reqwest::Client` + cookie jar. WBI keys cached in `Arc<RwLock<Option<(WbiKeys, Instant)>>>` with a 1-hour TTL. Shared to commands via Tauri `State<Arc<Bili>>`.
-- `commands.rs` — Six `#[tauri::command]`s: `get_user_info`, `get_rcmd`, `get_related`, `get_play_info`, `get_danmaku`, `get_comments`. All return `Result<_, String>` (errors stringified at the Tauri boundary).
+- `commands.rs` — `#[tauri::command]`s grouped by purpose: **read** (`get_user_info`, `get_rcmd`, `get_related`, `get_play_info`, `get_view_info`, `get_danmaku`, `get_comments`, `get_action_state`), **write** (`like_video`, `coin_video`, `triple_video`, `follow_user`, `feed_dislike`), and **diagnostics** (`get_decoder_probe`). All return `Result<_, String>` (errors stringified at the Tauri boundary). Register new commands in `lib.rs`'s `invoke_handler!`.
 - `wbi.rs` — Bilibili WBI signature scheme (mixin-key permutation + `wts`/`w_rid`). **Most endpoints reject unsigned requests with HTTP 412** — always sign via `Bili`'s helpers, don't hand-build query strings.
 - `stream.rs` — Async URI scheme handler. Rewrites HTTPS DASH segment URLs to `bilistream://seg/<base64>` and image URLs to `biliimg://img/<base64>` so the frontend can embed them without CSP violations. The handler proxies the actual HTTPS fetch through `Bili` so Bilibili CDN's `Referer`/`Origin` requirements are met.
 - `cookies.rs` — Reads `cookies.json` at startup (path overridable via `BILI_COOKIES`). **No hot-reload**: re-running `login.js` requires restarting the app.
@@ -49,8 +49,9 @@ Prereqs: `rustup target add wasm32-unknown-unknown`, `cargo install trunk tauri-
 - `api.rs` — Thin wrapper around `window.__TAURI__.core.invoke()`; one async fn per backend command.
 - `state.rs` — `RecommendState` is provided as **app-level context** in `app.rs` so the Home feed survives back-navigation from `/watch/:bvid`. Don't move this state into the route component or the feed will refetch on every back-nav.
 - `prefs.rs` — localStorage-backed preferences: `bili.preferred_qn` (sticky video quality), `bili.danmaku_enabled`, `bili.danmaku_opacity`.
-- `routes/` — `home` (feed + infinite scroll), `watch` (player + danmaku + related).
+- `routes/` — `home` (feed + infinite scroll), `watch` (player + danmaku + related + like/coin/fav/follow/triple actions + keyboard shortcuts).
 - `components/player.rs` — Wraps dash.js. Stores the `HtmlVideoElement` in a `StoredValue` and tears down dash.js inside `on_cleanup()`. Skipping the explicit teardown causes a WASM panic on unmount (regression fixed in `ddb0b63`).
+- `components/stats_hud.rs` — Optional overlay backed by `get_decoder_probe`; reports whether the playing stream is being decoded with hardware acceleration.
 
 ## Load-bearing patterns
 
@@ -60,6 +61,7 @@ Prereqs: `rustup target add wasm32-unknown-unknown`, `cargo install trunk tauri-
 - **Cookies are read once at startup.** `login.js` drives a CDP-controlled browser via Playwright to walk the QR-login flow, renders the QR to the terminal with `qrcode-terminal`, and writes `cookies.json` at the repo root. After re-login, restart the Tauri app — there is no hot-reload.
 - **Logging.** `tracing_subscriber` honors `RUST_LOG`; the default filter is `info,bili_rust_lib=debug`. Bump to e.g. `RUST_LOG=bili_rust_lib=trace` when diagnosing WBI/sign failures.
 - **Quality preference round-trip.** UI must call `set_preferred_qn()` after the user picks a quality, otherwise the next session falls back to the default.
+- **Write endpoints want the full web-client form.** Bilibili's risk-control rejects `/x/relation/modify` (and similar) when the bare `fid`/`act`/`csrf` form is sent — add `re_src`, `gaia_source`, `spmid`, `extend_content` to mirror what `bilibili.com` posts. `like_video`/`coin_video` happen to escape this today; assume new write endpoints will not.
 
 ## Stack notes
 
