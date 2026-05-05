@@ -43,6 +43,11 @@ struct PlayArgs<'a> {
     qn: Option<u32>,
 }
 
+#[derive(Serialize)]
+struct CidArgs {
+    cid: i64,
+}
+
 pub async fn get_user_info() -> Result<UserInfo, String> {
     invoke("get_user_info", NoArgs {}).await
 }
@@ -65,4 +70,8 @@ pub async fn get_play_info(
     qn: Option<u32>,
 ) -> Result<PlayInfo, String> {
     invoke("get_play_info", PlayArgs { bvid, cid, qn }).await
+}
+
+pub async fn get_danmaku(cid: i64) -> Result<Vec<Danmaku>, String> {
+    invoke("get_danmaku", CidArgs { cid }).await
 }

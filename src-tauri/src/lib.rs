@@ -1,6 +1,7 @@
 pub mod api;
 mod commands;
 pub mod cookies;
+pub mod danmaku;
 mod stream;
 pub mod wbi;
 
@@ -43,6 +44,7 @@ pub fn run() {
             commands::get_rcmd,
             commands::get_related,
             commands::get_play_info,
+            commands::get_danmaku,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

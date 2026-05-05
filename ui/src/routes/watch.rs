@@ -1,11 +1,12 @@
 use crate::api;
+use crate::components::danmaku::DanmakuOverlay;
 use crate::components::player::Player;
 use crate::components::video_card::VideoCardView;
 use crate::types::VideoCard;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use wasm_bindgen::JsCast;
-use web_sys::HtmlSelectElement;
+use web_sys::{Element, HtmlInputElement, HtmlSelectElement, HtmlVideoElement};
 
 #[component]
 pub fn Watch() -> impl IntoView {
@@ -40,6 +41,27 @@ pub fn Watch() -> impl IntoView {
 
     let on_time = Callback::new(move |t: f64| resume_at.set(t));
 
+    // Danmaku state — survives quality switches because it keys on cid only.
+    let video_sig = RwSignal::<Option<HtmlVideoElement>>::new(None);
+    let shell_sig = RwSignal::<Option<Element>>::new(None);
+    let dm_enabled = RwSignal::new(crate::prefs::get_danmaku_enabled());
+    let dm_opacity = RwSignal::new(crate::prefs::get_danmaku_opacity());
+    let danmaku_cid = Signal::derive(move || {
+        // Use the cid resolved by the play-info call when the URL didn't carry one.
+        cid.get().or_else(|| play.get().and_then(|r| r.ok()).map(|p| p.cid))
+    });
+    let danmakus = LocalResource::new(move || {
+        let c = danmaku_cid.get();
+        async move {
+            match c {
+                Some(c) => api::get_danmaku(c).await.ok(),
+                None => None,
+            }
+        }
+    });
+    let dm_signal: Signal<Option<Vec<crate::types::Danmaku>>> =
+        Signal::derive(move || danmakus.get().and_then(|x| x));
+
     view! {
         <div class="watch">
             <div>
@@ -58,10 +80,57 @@ pub fn Watch() -> impl IntoView {
                                 .collect();
                             let current = info.current_quality;
                             let start = resume_at.get_untracked();
+                            let shell_ref = NodeRef::<leptos::html::Div>::new();
+                            Effect::new(move |_| {
+                                if let Some(el) = shell_ref.get() {
+                                    let e: Element = el.unchecked_into();
+                                    shell_sig.set(Some(e));
+                                }
+                            });
                             view! {
-                                <Player info=info start_at=start on_time=on_time />
+                                <div class="player-shell" node_ref=shell_ref>
+                                    <Player
+                                        info=info
+                                        start_at=start
+                                        on_time=on_time
+                                        video_out=video_sig
+                                        fullscreen_target=shell_sig
+                                    />
+                                    <DanmakuOverlay
+                                        video=video_sig
+                                        danmakus=dm_signal
+                                        enabled=dm_enabled.into()
+                                        opacity=dm_opacity.into()
+                                    />
+                                </div>
                                 <div class="player-bar">
                                     <h1>{title}</h1>
+                                    <button
+                                        class="dm-toggle"
+                                        on:click=move |_| {
+                                            let next = !dm_enabled.get();
+                                            crate::prefs::set_danmaku_enabled(next);
+                                            dm_enabled.set(next);
+                                        }
+                                    >
+                                        {move || if dm_enabled.get() { "弹幕 开" } else { "弹幕 关" }}
+                                    </button>
+                                    <input
+                                        class="dm-opacity"
+                                        type="range"
+                                        min="0.2"
+                                        max="1"
+                                        step="0.05"
+                                        prop:value=move || dm_opacity.get().to_string()
+                                        on:input=move |ev| {
+                                            if let Some(inp) = ev.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok()) {
+                                                if let Ok(v) = inp.value().parse::<f64>() {
+                                                    crate::prefs::set_danmaku_opacity(v);
+                                                    dm_opacity.set(v);
+                                                }
+                                            }
+                                        }
+                                    />
                                     {(!qualities.is_empty()).then(|| view! {
                                         <select
                                             class="quality"

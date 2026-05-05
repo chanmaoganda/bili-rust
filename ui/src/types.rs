@@ -55,6 +55,15 @@ pub struct DashTrack {
     pub index_range: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Danmaku {
+    pub progress: f64,
+    pub mode: u8,
+    pub size: u16,
+    pub color: u32,
+    pub text: String,
+}
+
 pub fn fmt_views(n: i64) -> String {
     if n >= 10_000 {
         format!("{:.1}万", n as f64 / 10_000.0)

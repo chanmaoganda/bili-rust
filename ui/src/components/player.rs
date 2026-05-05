@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
-    HtmlElement, HtmlInputElement, HtmlTextAreaElement, HtmlVideoElement, KeyboardEvent,
+    Element, HtmlElement, HtmlInputElement, HtmlTextAreaElement, HtmlVideoElement, KeyboardEvent,
 };
 
 struct KeydownGuard {
@@ -26,6 +26,14 @@ pub fn Player(
     info: PlayInfo,
     #[prop(default = 0.0)] start_at: f64,
     #[prop(into, optional)] on_time: Option<Callback<f64>>,
+    /// Optional sink for the underlying <video> element. Set once the element
+    /// is mounted so siblings (e.g. the danmaku overlay) can read currentTime.
+    #[prop(optional)]
+    video_out: Option<RwSignal<Option<HtmlVideoElement>>>,
+    /// Optional fullscreen target. When provided, the F-key fullscreens this
+    /// element instead of the bare <video>, so overlay siblings remain visible.
+    #[prop(optional)]
+    fullscreen_target: Option<RwSignal<Option<Element>>>,
 ) -> impl IntoView {
     let video_ref = NodeRef::<leptos::html::Video>::new();
     let info_for_effect = info.clone();
@@ -39,6 +47,9 @@ pub fn Player(
         let Some(el) = video_ref.get() else { return };
         let video: HtmlVideoElement = el.unchecked_into();
         video_holder.set_value(Some(video.clone()));
+        if let Some(sink) = video_out {
+            sink.set(Some(video.clone()));
+        }
 
         let mpd = build_mpd(&info_for_effect);
         web_sys::console::log_1(&format!("MPD ({} bytes):\n{}", mpd.len(), mpd).into());
@@ -59,6 +70,9 @@ pub fn Player(
                 teardown_dashjs(video);
             }
         });
+        if let Some(sink) = video_out {
+            sink.set(None);
+        }
     });
 
     // F-key toggles fullscreen on the <video> element. Returning the listener
@@ -93,7 +107,18 @@ pub fn Player(
                 if doc_for_cb.fullscreen_element().is_some() {
                     let _ = doc_for_cb.exit_fullscreen();
                 } else {
-                    let _ = video_for_cb.request_fullscreen();
+                    // Prefer the explicit fullscreen target (e.g. the player
+                    // shell wrapping the <video> + danmaku overlay) so sibling
+                    // overlays remain visible. Fall back to the <video> itself.
+                    let used_shell = fullscreen_target
+                        .and_then(|t| t.get_untracked())
+                        .map(|el| {
+                            let _ = el.request_fullscreen();
+                        })
+                        .is_some();
+                    if !used_shell {
+                        let _ = video_for_cb.request_fullscreen();
+                    }
                 }
             });
 

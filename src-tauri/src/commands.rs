@@ -1,4 +1,5 @@
 use crate::api::Bili;
+use crate::danmaku::Danmaku;
 use crate::stream;
 use serde::Serialize;
 use serde_json::Value;
@@ -179,6 +180,11 @@ pub async fn get_play_info(
         accept_description,
         current_quality,
     })
+}
+
+#[tauri::command]
+pub async fn get_danmaku(state: BiliState<'_>, cid: i64) -> Result<Vec<Danmaku>, String> {
+    state.danmaku(cid).await.map_err(err)
 }
 
 /// Wrap an http(s) image URL in our biliimg:// scheme so requests carry the

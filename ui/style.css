@@ -49,7 +49,26 @@ main { padding: 20px; max-width: 1600px; margin: 0 auto; }
 
 .watch { display: grid; grid-template-columns: 1fr 360px; gap: 20px; }
 @media (max-width: 1100px) { .watch { grid-template-columns: 1fr; } }
+.player-shell { position: relative; line-height: 0; }
+.player-shell:fullscreen { width: 100vw; height: 100vh; background: #000; }
+.player-shell:fullscreen video { height: 100%; aspect-ratio: auto; border-radius: 0; }
 .watch video { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 6px; }
+.danmaku-layer {
+  position: absolute; inset: 0; pointer-events: none; overflow: hidden;
+  border-radius: 6px;
+}
+.danmaku-layer > span {
+  position: absolute; white-space: nowrap; color: #fff; font-weight: 700;
+  text-shadow: 1px 0 1px #000, 0 1px 1px #000, -1px 0 1px #000, 0 -1px 1px #000;
+  will-change: transform; line-height: 1.2;
+}
+.dm-toggle {
+  background: var(--panel); color: var(--text);
+  border: 1px solid #2b303b; border-radius: 6px;
+  padding: 6px 10px; font-size: 13px; cursor: pointer;
+}
+.dm-toggle:hover { border-color: var(--accent); color: var(--accent); }
+.dm-opacity { width: 90px; accent-color: var(--accent); }
 .watch h1 { font-size: 18px; margin: 12px 0 8px; flex: 1; }
 .watch .up { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
 .watch .up img { width: 36px; height: 36px; border-radius: 50%; }

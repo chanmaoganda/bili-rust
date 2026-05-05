@@ -137,6 +137,28 @@ impl Bili {
         v.data.ok_or_else(|| anyhow!("view: no data"))
     }
 
+    /// /x/v1/dm/list.so — danmaku XML for a given cid (deflate-compressed)
+    pub async fn danmaku(&self, cid: i64) -> Result<Vec<crate::danmaku::Danmaku>> {
+        let t0 = Instant::now();
+        let bytes = self
+            .client
+            .get("https://api.bilibili.com/x/v1/dm/list.so")
+            .query(&[("oid", cid.to_string())])
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        let out = crate::danmaku::parse_response(&bytes)?;
+        tracing::info!(
+            cid,
+            ms = t0.elapsed().as_millis() as u64,
+            count = out.len(),
+            "danmaku"
+        );
+        Ok(out)
+    }
+
     /// /x/player/wbi/playurl — DASH manifest
     pub async fn play_url(&self, bvid: &str, cid: i64, qn: u32) -> Result<Value> {
         let t0 = Instant::now();
