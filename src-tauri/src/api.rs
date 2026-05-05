@@ -368,15 +368,31 @@ impl Bili {
     /// /x/web-interface/archive/relation — current user's relation to a video.
     /// Unauthenticated callers still get code=0 with all fields zeroed.
     pub async fn archive_relation(&self, bvid: &str) -> Result<ArchiveRelation> {
-        let v: ApiEnvelope<ArchiveRelationRaw> = self
+        let url = "https://api.bilibili.com/x/web-interface/archive/relation";
+        let bytes = self
             .http()
-            .get("https://api.bilibili.com/x/web-interface/archive/relation")
+            .get(url)
             .query(&[("bvid", bvid)])
             .send()
             .await?
-            .json()
+            .bytes()
             .await?;
+        let v: ApiEnvelope<ArchiveRelationRaw> =
+            serde_json::from_slice(&bytes).with_context(|| {
+                format!(
+                    "archive_relation parse failed: body={}",
+                    String::from_utf8_lossy(&bytes)
+                )
+            })?;
         if v.code != 0 {
+            tracing::warn!(
+                url,
+                bvid,
+                code = v.code,
+                msg = %v.message,
+                body = %String::from_utf8_lossy(&bytes),
+                "archive_relation non-zero code"
+            );
             return Err(anyhow!(
                 "archive_relation failed: code={} msg={}",
                 v.code,
@@ -384,6 +400,13 @@ impl Bili {
             ));
         }
         let r = v.data.unwrap_or_default();
+        tracing::debug!(
+            bvid,
+            like = r.like,
+            coin_number = r.coin_number,
+            favorite = r.favorite,
+            "archive_relation"
+        );
         Ok(ArchiveRelation {
             liked: r.like != 0,
             coined: r.coin_number,
@@ -391,17 +414,43 @@ impl Bili {
         })
     }
 
-    /// /x/relation — relation to a specific user. `attribute` ∈ {2, 6} ⇒ 已关注.
+    /// /x/relation — relation to a specific user. `attribute` is a bit mask:
+    /// bit 1 (=2) "I follow them", bit 2 (=4) "they follow me",
+    /// bit 7 (=128) "specially followed". So mutual = 6, special = 130, etc.
+    /// We only need the "I follow them" bit.
     pub async fn user_relation(&self, mid: i64) -> Result<bool> {
-        let v: ApiEnvelope<UserRelationRaw> = self
+        let attr = self.user_relation_raw(mid).await?;
+        Ok(attr & 2 != 0)
+    }
+
+    /// Same call as `user_relation`, but returns the raw `attribute` mask so
+    /// callers (smoke tests, diagnostics) can inspect every bit.
+    pub async fn user_relation_raw(&self, mid: i64) -> Result<i64> {
+        let url = "https://api.bilibili.com/x/relation";
+        let bytes = self
             .http()
-            .get("https://api.bilibili.com/x/relation")
+            .get(url)
             .query(&[("fid", mid.to_string())])
             .send()
             .await?
-            .json()
+            .bytes()
             .await?;
+        let v: ApiEnvelope<UserRelationRaw> =
+            serde_json::from_slice(&bytes).with_context(|| {
+                format!(
+                    "user_relation parse failed: body={}",
+                    String::from_utf8_lossy(&bytes)
+                )
+            })?;
         if v.code != 0 {
+            tracing::warn!(
+                url,
+                fid = mid,
+                code = v.code,
+                msg = %v.message,
+                body = %String::from_utf8_lossy(&bytes),
+                "user_relation non-zero code"
+            );
             return Err(anyhow!(
                 "user_relation failed: code={} msg={}",
                 v.code,
@@ -409,7 +458,102 @@ impl Bili {
             ));
         }
         let attr = v.data.map(|d| d.attribute).unwrap_or(0);
-        Ok(attr == 2 || attr == 6)
+        tracing::debug!(fid = mid, attribute = attr, "user_relation");
+        Ok(attr)
+    }
+
+    /// /x/relation/followings — list of users `vmid` follows. `pn` is 1-based,
+    /// `ps` ≤ 50. Response wraps the list in `data.list`.
+    pub async fn followings(
+        &self,
+        vmid: i64,
+        pn: u32,
+        ps: u32,
+    ) -> Result<Vec<FollowingItem>> {
+        let url = "https://api.bilibili.com/x/relation/followings";
+        let bytes = self
+            .http()
+            .get(url)
+            .query(&[
+                ("vmid", vmid.to_string()),
+                ("pn", pn.to_string()),
+                ("ps", ps.to_string()),
+                ("order", "desc".to_string()),
+            ])
+            .send()
+            .await?
+            .bytes()
+            .await?;
+        let v: ApiEnvelope<FollowingsRaw> =
+            serde_json::from_slice(&bytes).with_context(|| {
+                format!(
+                    "followings parse failed: body={}",
+                    String::from_utf8_lossy(&bytes)
+                )
+            })?;
+        if v.code != 0 {
+            tracing::warn!(
+                url,
+                vmid,
+                code = v.code,
+                msg = %v.message,
+                body = %String::from_utf8_lossy(&bytes),
+                "followings non-zero code"
+            );
+            return Err(anyhow!(
+                "followings failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
+        }
+        Ok(v.data.unwrap_or_default().list)
+    }
+
+    /// /x/relation/tag — followings within a specific tag. `tag_id = -10` is
+    /// the built-in "特别关注" tag. `data` is a bare array (different shape
+    /// from `/x/relation/followings`).
+    pub async fn followings_tag(
+        &self,
+        tag_id: i64,
+        pn: u32,
+        ps: u32,
+    ) -> Result<Vec<FollowingItem>> {
+        let url = "https://api.bilibili.com/x/relation/tag";
+        let bytes = self
+            .http()
+            .get(url)
+            .query(&[
+                ("tagid", tag_id.to_string()),
+                ("pn", pn.to_string()),
+                ("ps", ps.to_string()),
+            ])
+            .send()
+            .await?
+            .bytes()
+            .await?;
+        let v: ApiEnvelope<Vec<FollowingItem>> =
+            serde_json::from_slice(&bytes).with_context(|| {
+                format!(
+                    "followings_tag parse failed: body={}",
+                    String::from_utf8_lossy(&bytes)
+                )
+            })?;
+        if v.code != 0 {
+            tracing::warn!(
+                url,
+                tag_id,
+                code = v.code,
+                msg = %v.message,
+                body = %String::from_utf8_lossy(&bytes),
+                "followings_tag non-zero code"
+            );
+            return Err(anyhow!(
+                "followings_tag failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
+        }
+        Ok(v.data.unwrap_or_default())
     }
 
     /// /x/web-interface/archive/like — toggle like (1 = like, 2 = un-like).
@@ -419,6 +563,7 @@ impl Bili {
         form.insert("bvid", bvid.to_string());
         form.insert("like", if like { "1" } else { "2" }.to_string());
         form.insert("csrf", csrf);
+        archive_risk_fields(&mut form, bvid, &self.uid());
         self.post_form("https://api.bilibili.com/x/web-interface/archive/like", form, "like_video").await
     }
 
@@ -431,6 +576,7 @@ impl Bili {
         form.insert("multiply", m.to_string());
         form.insert("select_like", if with_like { "1" } else { "0" }.to_string());
         form.insert("csrf", csrf);
+        archive_risk_fields(&mut form, bvid, &self.uid());
         self.post_form("https://api.bilibili.com/x/web-interface/coin/add", form, "coin_video").await
     }
 
@@ -439,18 +585,29 @@ impl Bili {
     /// went through.
     pub async fn triple_video(&self, bvid: &str) -> Result<TripleResult> {
         let csrf = self.session().cookies.csrf.clone();
+        let url = "https://api.bilibili.com/x/web-interface/archive/like/triple";
         let mut form = BTreeMap::new();
         form.insert("bvid", bvid.to_string());
         form.insert("csrf", csrf);
-        let v: ApiEnvelope<TripleRaw> = self
-            .http()
-            .post("https://api.bilibili.com/x/web-interface/archive/like/triple")
-            .form(&form)
-            .send()
-            .await?
-            .json()
-            .await?;
+        archive_risk_fields(&mut form, bvid, &self.uid());
+        let resp = self.http().post(url).form(&form).send().await?;
+        let bytes = resp.bytes().await?;
+        let v: ApiEnvelope<TripleRaw> =
+            serde_json::from_slice(&bytes).with_context(|| {
+                format!(
+                    "triple_video parse failed: body={}",
+                    String::from_utf8_lossy(&bytes)
+                )
+            })?;
         if v.code != 0 {
+            tracing::warn!(
+                url,
+                bvid,
+                code = v.code,
+                msg = %v.message,
+                body = %String::from_utf8_lossy(&bytes),
+                "triple_video non-zero code"
+            );
             return Err(anyhow!(
                 "triple_video failed: code={} msg={}",
                 v.code,
@@ -491,17 +648,28 @@ impl Bili {
         form: BTreeMap<&str, String>,
         op: &'static str,
     ) -> Result<()> {
-        let v: ApiEnvelope<Value> = self
-            .http()
-            .post(url)
-            .form(&form)
-            .send()
-            .await?
-            .json()
-            .await?;
+        let resp = self.http().post(url).form(&form).send().await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        let v: ApiEnvelope<Value> = serde_json::from_slice(&bytes).with_context(|| {
+            format!(
+                "{op} parse failed: status={status} body={}",
+                String::from_utf8_lossy(&bytes)
+            )
+        })?;
         if v.code != 0 {
+            tracing::warn!(
+                op,
+                url,
+                status = %status,
+                code = v.code,
+                msg = %v.message,
+                body = %String::from_utf8_lossy(&bytes),
+                "post_form non-zero code"
+            );
             return Err(anyhow!("{op} failed: code={} msg={}", v.code, v.message));
         }
+        tracing::debug!(op, url, "post_form ok");
         Ok(())
     }
 
@@ -866,6 +1034,65 @@ impl Bili {
     }
 }
 
+/// Bilibili's risk-control silently rejects bare `csrf+bvid+like` forms with
+/// `code=-403 账号异常` for some accounts. The web client posts a fuller
+/// payload that mirrors the spm/source/extend triplet from the video page.
+/// We add the same set to like/coin/triple, mirroring what `relation_modify`
+/// does for the follow endpoint (CLAUDE.md: "assume new write endpoints will
+/// not [escape risk control]").
+///
+/// `entity_id` for archive operations is the bvid as a quoted string —
+/// matches what bilibili.com's web client posts.
+///
+/// Note on per-user independence: only `ramval` is varied here. The other
+/// fields (`spmid`, `source`, `gaia_source`, …) are page-level constants in
+/// the real web client — every Chrome instance sends the same string. Faking
+/// them per-user would be a fingerprintable deviation from real browsers and
+/// invites more risk-control attention, not less. The genuine per-user
+/// signal lives in cookies (SESSDATA / bili_jct / DedeUserID / buvid3),
+/// which are already isolated per-`cookies.json`.
+fn archive_risk_fields(form: &mut BTreeMap<&'static str, String>, bvid: &str, uid: &str) {
+    form.insert("eab_x", "2".to_string());
+    form.insert("ramval", ramval_for(uid).to_string());
+    form.insert("source", "web_normal".to_string());
+    form.insert("ga", "1".to_string());
+    form.insert("gaia_source", "web_normal".to_string());
+    form.insert("spmid", "333.788.0.0".to_string());
+    form.insert(
+        "extend_content",
+        format!(r#"{{"entity":"archive","entity_id":"{bvid}"}}"#),
+    );
+}
+
+/// Per-user, per-request `ramval` seed. Real web traffic shows a 6–7 digit
+/// integer that's stable per page-load and increments slightly between
+/// actions. We approximate by hashing the user's `DedeUserID` (so two users
+/// on the same machine have disjoint sequences) and adding a process-wide
+/// monotonic counter mixed with startup nanos (so restarts don't collide).
+fn ramval_for(uid: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    static START_NANOS: once_cell::sync::Lazy<u64> = once_cell::sync::Lazy::new(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(1)
+    });
+
+    let mut h = DefaultHasher::new();
+    uid.hash(&mut h);
+    let user_seed = h.finish();
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mixed = user_seed
+        .wrapping_mul(0x9E3779B97F4A7C15)
+        .wrapping_add(*START_NANOS)
+        .wrapping_add(n);
+    mixed % 9_000_000 + 1_000_000
+}
+
 #[derive(Deserialize)]
 struct ApiEnvelope<T> {
     code: i64,
@@ -957,6 +1184,24 @@ pub struct ArchiveRelation {
 struct UserRelationRaw {
     #[serde(default)]
     attribute: i64,
+}
+
+#[derive(Deserialize, Default)]
+struct FollowingsRaw {
+    #[serde(default)]
+    list: Vec<FollowingItem>,
+}
+
+#[derive(Deserialize, Debug, Default, Clone)]
+pub struct FollowingItem {
+    #[serde(default)]
+    pub mid: i64,
+    #[serde(default)]
+    pub uname: String,
+    #[serde(default)]
+    pub attribute: i64,
+    #[serde(default)]
+    pub special: i64,
 }
 
 #[derive(Deserialize, Default)]

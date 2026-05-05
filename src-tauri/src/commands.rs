@@ -409,8 +409,22 @@ pub async fn get_action_state(
         }
     };
     let (ar, fol) = tokio::join!(f_archive, f_user);
-    let ar = ar.map_err(err)?;
-    let followed = fol.map_err(err)?;
+    // Decouple the two halves: a transient failure on archive/relation must
+    // not blank out the follow bit (and vice versa). Each side falls back to
+    // its zero value and we log the error so the UI shows partial state
+    // instead of the whole struct reverting to default.
+    let ar = ar.unwrap_or_else(|e| {
+        tracing::warn!(bvid = %bvid, error = %e, "archive_relation failed");
+        crate::api::ArchiveRelation {
+            liked: false,
+            coined: 0,
+            favorited: false,
+        }
+    });
+    let followed = fol.unwrap_or_else(|e| {
+        tracing::warn!(mid, error = %e, "user_relation failed");
+        false
+    });
     Ok(ActionState {
         liked: ar.liked,
         coined: ar.coined,
