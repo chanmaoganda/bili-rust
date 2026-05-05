@@ -94,6 +94,14 @@ pub struct ViewInfo {
     pub share: i64,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
+pub struct LastPlay {
+    #[serde(default)]
+    pub last_play_time_secs: f64,
+    #[serde(default)]
+    pub last_play_cid: i64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct DashTrack {
     pub id: i64,

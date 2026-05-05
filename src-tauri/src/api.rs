@@ -546,6 +546,33 @@ impl Bili {
         Ok(data)
     }
 
+    /// /x/player/wbi/v2 — per-video player metadata. We only deserialize the
+    /// "where did the user stop last time" fields (`last_play_time` is in ms,
+    /// `last_play_cid` may differ from the requested cid for multi-part videos
+    /// when the user previously played a different page).
+    pub async fn player_v2(&self, bvid: &str, cid: i64) -> Result<PlayerV2Info> {
+        let keys = self.wbi_keys().await?;
+        let mut params = BTreeMap::new();
+        params.insert("bvid".to_string(), bvid.to_string());
+        params.insert("cid".to_string(), cid.to_string());
+        let (w_rid, wts) = wbi::sign(&mut params, &keys);
+        params.insert("w_rid".to_string(), w_rid);
+        params.insert("wts".to_string(), wts);
+
+        let v: ApiEnvelope<PlayerV2Info> = self
+            .http()
+            .get("https://api.bilibili.com/x/player/wbi/v2")
+            .query(&params)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!("player_v2 failed: code={} msg={}", v.code, v.message));
+        }
+        Ok(v.data.unwrap_or_default())
+    }
+
     /// /x/space/wbi/acc/info + /x/relation/stat — public profile + follow counts.
     pub async fn space_info(&self, mid: i64) -> Result<SpaceInfoData> {
         let keys = self.wbi_keys().await?;
@@ -964,6 +991,19 @@ pub struct ViewStat {
     pub like: i64,
     #[serde(default)]
     pub share: i64,
+}
+
+#[derive(Deserialize, Default)]
+pub struct PlayerV2Info {
+    /// Last play position in **milliseconds**. 0 if the user has never played
+    /// this video (or has watched it to completion — Bilibili resets to 0 in
+    /// that case).
+    #[serde(default)]
+    pub last_play_time: i64,
+    /// `cid` of the page the user was last on. May differ from the requested
+    /// cid for multi-part videos.
+    #[serde(default)]
+    pub last_play_cid: i64,
 }
 
 pub struct SpaceInfoData {

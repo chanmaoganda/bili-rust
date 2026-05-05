@@ -44,6 +44,12 @@ pub fn Watch() -> impl IntoView {
 
     let qn = RwSignal::new(crate::prefs::get_preferred_qn());
     let resume_at = RwSignal::new(0.0_f64);
+    // Gate: false until we've either (a) honored an explicit `?t=` URL param,
+    // (b) fetched the per-video saved position from /x/player/wbi/v2 and
+    // optionally seeded resume_at from it, or (c) given up because no cid is
+    // resolvable. Player mount waits on this so its one-shot canPlay seek
+    // (player.rs) operates on a settled start_at value.
+    let last_play_done = RwSignal::new(false);
 
     // Resume position when arriving with `?t=<seconds>` (e.g. clicked from
     // /history). Falls back to 0 for fresh watches. Bilibili's `progress` is
@@ -56,10 +62,11 @@ pub fn Watch() -> impl IntoView {
             .filter(|t| *t > 0.0)
     });
 
-    // Reset resume position when navigating to a different video, seeding from
+    // Reset resume state when navigating to a different video, seeding from
     // t_resume so /history clicks jump to the saved progress on first frame.
     Effect::new(move |_| {
         let _ = bvid.get();
+        last_play_done.set(false);
         resume_at.set(t_resume.get().unwrap_or(0.0));
         qn.set(crate::prefs::get_preferred_qn());
     });
@@ -77,6 +84,70 @@ pub fn Watch() -> impl IntoView {
     let view_info = LocalResource::new(move || {
         let bv = bvid.get();
         async move { api::get_view_info(&bv).await }
+    });
+
+    // Fetch the user's saved position for this bvid+cid and seed resume_at
+    // before Player mounts — covers the home feed / related sidebar case where
+    // the link has no `?t=`. Re-runs whenever a dependency changes; the
+    // last_play_done guard ensures the API is hit at most once per bvid.
+    Effect::new(move |_| {
+        if last_play_done.get() {
+            return;
+        }
+        let bv = bvid.get();
+        if bv.is_empty() {
+            return;
+        }
+        // Explicit URL ?t= overrides the saved position — skip the fetch.
+        if t_resume.get_untracked().is_some() {
+            last_play_done.set(true);
+            return;
+        }
+        // Need a cid: prefer the URL, then fall back to whichever resource
+        // has resolved with metadata for the current bvid.
+        let c = cid.get_untracked()
+            .or_else(|| {
+                play.get()
+                    .and_then(|r| r.ok())
+                    .filter(|p| p.bvid == bv)
+                    .map(|p| p.cid)
+            })
+            .or_else(|| {
+                view_info
+                    .get()
+                    .and_then(|r| r.ok())
+                    .filter(|v| v.bvid == bv)
+                    .map(|v| v.cid)
+            });
+        let Some(c) = c else {
+            return;
+        };
+        let bv_cap = bv.clone();
+        spawn_local(async move {
+            let lp = api::get_last_play(&bv_cap, c).await.ok();
+            // Drop the result if bvid changed while the request was in flight —
+            // the new video will dispatch its own fetch and own last_play_done.
+            if bvid.get_untracked() != bv_cap {
+                return;
+            }
+            if let Some(lp) = lp {
+                if lp.last_play_time_secs > 0.0 {
+                    // Tail trim: treat positions within ~5s of the end as
+                    // "finished" so a fully-watched video doesn't restart on
+                    // the credits. Unknown duration ⇒ trust the value.
+                    let dur = view_info
+                        .get_untracked()
+                        .and_then(|r| r.ok())
+                        .filter(|v| v.bvid == bv_cap)
+                        .map(|v| v.duration as f64)
+                        .unwrap_or(f64::MAX);
+                    if lp.last_play_time_secs + 5.0 < dur {
+                        resume_at.set(lp.last_play_time_secs);
+                    }
+                }
+            }
+            last_play_done.set(true);
+        });
     });
 
     let on_time = Callback::new(move |t: f64| resume_at.set(t));
@@ -481,7 +552,14 @@ pub fn Watch() -> impl IntoView {
     view! {
         <div class="watch">
             <div>
-                {move || match play.get() {
+                {move || {
+                    // Hold the player off the DOM until we know the resume
+                    // position — otherwise the one-shot canPlay seek inside
+                    // Player would fire against the (still 0) initial value.
+                    if !last_play_done.get() {
+                        return view! { <div class="loading">"Loading player…"</div> }.into_any();
+                    }
+                    match play.get() {
                     None => view! { <div class="loading">"Loading player…"</div> }.into_any(),
                     Some(res) => match res {
                         Ok(info) => {
@@ -750,6 +828,7 @@ pub fn Watch() -> impl IntoView {
                                 .into_any()
                         }
                         Err(e) => view! { <div class="error">{e}</div> }.into_any(),
+                    }
                     }
                 }}
                 <Comments bvid=bvid />

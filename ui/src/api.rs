@@ -116,6 +116,16 @@ pub async fn get_view_info(bvid: &str) -> Result<ViewInfo, String> {
     invoke("get_view_info", BvidArgs { bvid }).await
 }
 
+#[derive(Serialize)]
+struct LastPlayArgs<'a> {
+    bvid: &'a str,
+    cid: i64,
+}
+
+pub async fn get_last_play(bvid: &str, cid: i64) -> Result<LastPlay, String> {
+    invoke("get_last_play", LastPlayArgs { bvid, cid }).await
+}
+
 pub async fn get_danmaku(cid: i64) -> Result<Vec<Danmaku>, String> {
     invoke("get_danmaku", CidArgs { cid }).await
 }

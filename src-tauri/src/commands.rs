@@ -318,6 +318,29 @@ pub async fn get_play_info(
     })
 }
 
+#[derive(Serialize)]
+pub struct LastPlay {
+    /// Last playback position in seconds. 0 when the user has never played
+    /// this video, or has watched it to completion (Bilibili clears the field).
+    pub last_play_time_secs: f64,
+    /// cid the user was last on. May differ from the requested cid for
+    /// multi-part videos. 0 when no prior play.
+    pub last_play_cid: i64,
+}
+
+#[tauri::command]
+pub async fn get_last_play(
+    state: BiliState<'_>,
+    bvid: String,
+    cid: i64,
+) -> Result<LastPlay, String> {
+    let info = state.player_v2(&bvid, cid).await.map_err(err)?;
+    Ok(LastPlay {
+        last_play_time_secs: info.last_play_time as f64 / 1000.0,
+        last_play_cid: info.last_play_cid,
+    })
+}
+
 #[tauri::command]
 pub async fn get_view_info(state: BiliState<'_>, bvid: String) -> Result<ViewInfo, String> {
     let v = state.view(&bvid).await.map_err(err)?;
