@@ -5,7 +5,7 @@
   "identifier": "dev.local.bili-rust",
   "build": {
     "beforeDevCommand": "cd ui && trunk serve --port 1420",
-    "beforeBuildCommand": "cd ui && trunk build --release",
+    "beforeBuildCommand": "bash scripts/build-ui.sh",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../ui/dist"
   },
