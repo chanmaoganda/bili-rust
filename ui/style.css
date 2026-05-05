@@ -72,3 +72,12 @@ main { padding: 20px; max-width: 1600px; margin: 0 auto; }
   color: var(--text); border: 1px solid #2b303b; border-radius: 6px; cursor: pointer; }
 .error button:hover { border-color: var(--accent); color: var(--accent); }
 .scroll-sentinel { height: 1px; }
+
+.feed-toolbar { display: flex; justify-content: flex-end; margin: 0 0 14px; }
+.refresh {
+  background: var(--panel); color: var(--text);
+  border: 1px solid #2b303b; border-radius: 6px;
+  padding: 6px 12px; font-size: 13px; cursor: pointer;
+}
+.refresh:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.refresh:disabled { opacity: 0.5; cursor: not-allowed; }

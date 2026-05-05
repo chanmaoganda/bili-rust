@@ -1,5 +1,6 @@
 use crate::api;
 use crate::components::video_card::VideoCardView;
+use crate::state::RecommendState;
 use crate::types::VideoCard;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
@@ -19,12 +20,16 @@ impl Drop for ObserverGuard {
 
 #[component]
 pub fn Home() -> impl IntoView {
-    let cards = RwSignal::new(Vec::<VideoCard>::new());
-    let fresh_idx = RwSignal::new(0u32);
-    let loading = RwSignal::new(false);
-    let error = RwSignal::new(None::<String>);
-    let attempted = RwSignal::new(false);
-    let end_reached = RwSignal::new(false);
+    let state = use_context::<RecommendState>().expect("RecommendState context missing");
+    let RecommendState {
+        cards,
+        fresh_idx,
+        loading,
+        error,
+        attempted,
+        end_reached,
+        scroll_y,
+    } = state;
 
     // StoredValue::new_local lets us share a non-Send closure across reactive
     // contexts. Calling: load_more.with_value(|f| f()).
@@ -52,11 +57,32 @@ pub fn Home() -> impl IntoView {
         });
     });
 
-    // Initial load — fire once. The attempted guard prevents re-firing after
-    // an empty response.
+    // Initial load on first ever mount. The attempted guard means subsequent
+    // remounts (back-nav from /watch) skip refetching — the previously loaded
+    // cards in context are kept.
     Effect::new(move |_| {
         if !attempted.get() && !loading.get() {
             load_more.with_value(|f| f());
+        }
+    });
+
+    // Restore scroll position when remounting (e.g. after back-nav). Runs once.
+    Effect::new(move |prev: Option<()>| {
+        if prev.is_some() {
+            return;
+        }
+        let y = scroll_y.get_untracked();
+        if y > 0.0 {
+            if let Some(win) = web_sys::window() {
+                win.scroll_to_with_x_and_y(0.0, y);
+            }
+        }
+    });
+
+    // Save scroll position on unmount so the next mount can restore it.
+    on_cleanup(move || {
+        if let Some(win) = web_sys::window() {
+            scroll_y.set(win.scroll_y().unwrap_or(0.0));
         }
     });
 
@@ -108,8 +134,29 @@ pub fn Home() -> impl IntoView {
         }
     });
 
+    let on_refresh = move |_| {
+        if loading.get_untracked() {
+            return;
+        }
+        state.reset();
+        if let Some(win) = web_sys::window() {
+            win.scroll_to_with_x_and_y(0.0, 0.0);
+        }
+        load_more.with_value(|f| f());
+    };
+
     view! {
         <div>
+            <div class="feed-toolbar">
+                <button
+                    class="refresh"
+                    on:click=on_refresh
+                    disabled=move || loading.get()
+                    title="Refresh recommendations"
+                >
+                    "↻ Refresh"
+                </button>
+            </div>
             <div class="grid">
                 <For
                     each=move || cards.get()

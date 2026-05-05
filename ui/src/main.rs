@@ -3,6 +3,7 @@ mod app;
 mod components;
 mod prefs;
 mod routes;
+mod state;
 mod types;
 
 use wasm_bindgen::JsCast;

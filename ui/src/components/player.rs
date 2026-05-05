@@ -29,10 +29,16 @@ pub fn Player(
 ) -> impl IntoView {
     let video_ref = NodeRef::<leptos::html::Video>::new();
     let info_for_effect = info.clone();
+    // Holds the <video> across the component lifetime so on_cleanup can reach
+    // it after Leptos has removed the node from the DOM. Without this teardown
+    // dash.js keeps firing playbackTimeUpdated against a disposed Callback,
+    // which panics the WASM runtime on back-nav from /watch.
+    let video_holder = StoredValue::new_local(None::<HtmlVideoElement>);
 
     Effect::new(move |_| {
         let Some(el) = video_ref.get() else { return };
         let video: HtmlVideoElement = el.unchecked_into();
+        video_holder.set_value(Some(video.clone()));
 
         let mpd = build_mpd(&info_for_effect);
         web_sys::console::log_1(&format!("MPD ({} bytes):\n{}", mpd.len(), mpd).into());
@@ -45,6 +51,14 @@ pub fn Player(
         if let Err(e) = init_dashjs(&video, &url, start_at, on_time) {
             web_sys::console::error_1(&format!("dash.js init: {e:?}").into());
         }
+    });
+
+    on_cleanup(move || {
+        video_holder.with_value(|v| {
+            if let Some(video) = v {
+                teardown_dashjs(video);
+            }
+        });
     });
 
     // F-key toggles fullscreen on the <video> element. Returning the listener
@@ -93,6 +107,27 @@ pub fn Player(
     view! { <video controls autoplay node_ref=video_ref></video> }
 }
 
+// Drop any dash.js MediaPlayer attached to this <video>. Safe to call when
+// none is attached. Clears the __bili_dash slot so a re-init won't double-free.
+fn teardown_dashjs(video: &HtmlVideoElement) {
+    let video_js: JsValue = JsValue::from(video.clone());
+    let Ok(prev) = Reflect::get(&video_js, &"__bili_dash".into()) else {
+        return;
+    };
+    if prev.is_undefined() || prev.is_null() {
+        return;
+    }
+    if let Ok(reset) = Reflect::get(&prev, &"reset".into()).and_then(|f| f.dyn_into::<Function>()) {
+        let _ = reset.call0(&prev);
+    }
+    if let Ok(destroy) =
+        Reflect::get(&prev, &"destroy".into()).and_then(|f| f.dyn_into::<Function>())
+    {
+        let _ = destroy.call0(&prev);
+    }
+    let _ = Reflect::set(&video_js, &"__bili_dash".into(), &JsValue::UNDEFINED);
+}
+
 fn dashjs_global() -> Result<JsValue, JsValue> {
     let win = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
     let v = Reflect::get(&win, &"dashjs".into())?;
@@ -111,25 +146,12 @@ fn init_dashjs(
     // If a previous dash.js instance is still attached to this <video> (Leptos
     // reuses the DOM node across re-renders), tear it down so we don't end up
     // with two MediaPlayers fighting for the same element.
-    let video_js: JsValue = JsValue::from(video.clone());
-    if let Ok(prev) = Reflect::get(&video_js, &"__bili_dash".into()) {
-        if !prev.is_undefined() && !prev.is_null() {
-            if let Ok(reset) =
-                Reflect::get(&prev, &"reset".into()).and_then(|f| f.dyn_into::<Function>())
-            {
-                let _ = reset.call0(&prev);
-            }
-            if let Ok(destroy) =
-                Reflect::get(&prev, &"destroy".into()).and_then(|f| f.dyn_into::<Function>())
-            {
-                let _ = destroy.call0(&prev);
-            }
-        }
-    }
+    teardown_dashjs(video);
     // Reset native element state so seeks and bitrate switches don't carry over.
     video.set_src("");
     video.set_current_time(0.0);
 
+    let video_js: JsValue = JsValue::from(video.clone());
     let dashjs = dashjs_global()?;
     let mp_factory: Function = Reflect::get(&dashjs, &"MediaPlayer".into())?.dyn_into()?;
     let mp = mp_factory.call0(&JsValue::UNDEFINED)?;
