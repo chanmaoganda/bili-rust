@@ -1,4 +1,5 @@
 pub mod api;
+mod auth;
 mod commands;
 pub mod cookies;
 pub mod danmaku;
@@ -24,9 +25,20 @@ pub fn run() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(default_cookie_path);
 
-    let cookies = Cookies::load(&cookie_path)
-        .unwrap_or_else(|e| panic!("loading cookies from {}: {e:#}", cookie_path.display()));
-    let bili = Arc::new(Bili::new(cookies).expect("init bili client"));
+    // Cookies are optional at startup — without them the user lands on /login
+    // and the QR flow writes them in. Only hard-fail on truly broken JSON.
+    let bili = match Cookies::load(&cookie_path) {
+        Ok(c) => Arc::new(Bili::new(c).expect("init bili client")),
+        Err(e) => {
+            tracing::warn!(
+                path = %cookie_path.display(),
+                err = %e,
+                "starting without cookies — log in via /login"
+            );
+            Arc::new(Bili::empty().expect("init empty bili client"))
+        }
+    };
+    bili.set_cookies_path(cookie_path);
 
     let bili_for_scheme = bili.clone();
     let bili_for_img = bili.clone();
@@ -53,6 +65,11 @@ pub fn run() {
             commands::coin_video,
             commands::triple_video,
             commands::follow_user,
+            commands::is_following,
+            commands::get_space_info,
+            commands::get_space_videos,
+            commands::qr_login_start,
+            commands::qr_login_poll,
             commands::get_decoder_probe,
         ])
         .run(tauri::generate_context!())

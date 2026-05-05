@@ -1,4 +1,4 @@
-use crate::cookies::Cookies;
+use crate::cookies::{Cookies, RawCookie};
 use crate::wbi::{self, WbiKeys};
 use anyhow::{anyhow, Context, Result};
 use parking_lot::RwLock;
@@ -7,24 +7,33 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
-#[derive(Clone)]
-pub struct Bili {
+/// One immutable login session: a reqwest `Client` whose default headers
+/// include the cookie string for these `Cookies`. Sessions are wrapped in
+/// `Arc` and swapped atomically on login so in-flight requests keep using the
+/// session they started with.
+pub struct Session {
     pub client: Client,
-    pub cookies: Arc<Cookies>,
-    wbi_cache: Arc<RwLock<Option<(WbiKeys, Instant)>>>,
+    pub cookies: Cookies,
 }
 
-impl Bili {
-    pub fn new(cookies: Cookies) -> Result<Self> {
+impl Session {
+    pub fn build(cookies: Cookies) -> Result<Arc<Self>> {
         let mut headers = HeaderMap::new();
         headers.insert(header::USER_AGENT, HeaderValue::from_static(UA));
-        headers.insert(header::REFERER, HeaderValue::from_static("https://www.bilibili.com/"));
-        headers.insert(header::ORIGIN, HeaderValue::from_static("https://www.bilibili.com"));
+        headers.insert(
+            header::REFERER,
+            HeaderValue::from_static("https://www.bilibili.com/"),
+        );
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://www.bilibili.com"),
+        );
         headers.insert(
             header::COOKIE,
             HeaderValue::from_str(&cookies.header).context("cookie header bytes")?,
@@ -39,26 +48,133 @@ impl Bili {
             .build()
             .context("build reqwest client")?;
 
+        Ok(Arc::new(Self { client, cookies }))
+    }
+
+    /// A bare client with no cookies — used by the QR-login flow so we don't
+    /// leak any prior identity into the passport endpoints.
+    pub fn anonymous() -> Result<Client> {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::USER_AGENT, HeaderValue::from_static(UA));
+        headers.insert(
+            header::REFERER,
+            HeaderValue::from_static("https://passport.bilibili.com/"),
+        );
+        Client::builder()
+            .default_headers(headers)
+            .timeout(Duration::from_secs(30))
+            .build()
+            .context("build anonymous client")
+    }
+}
+
+#[derive(Clone)]
+pub struct Bili {
+    session: Arc<RwLock<Arc<Session>>>,
+    wbi_cache: Arc<RwLock<Option<(WbiKeys, Instant)>>>,
+    cookies_path: Arc<RwLock<Option<PathBuf>>>,
+}
+
+impl Bili {
+    pub fn new(cookies: Cookies) -> Result<Self> {
+        let session = Session::build(cookies)?;
         Ok(Self {
-            client,
-            cookies: Arc::new(cookies),
+            session: Arc::new(RwLock::new(session)),
             wbi_cache: Arc::new(RwLock::new(None)),
+            cookies_path: Arc::new(RwLock::new(None)),
         })
     }
 
-    /// /x/web-interface/nav — user info + WBI keys
+    /// Construct a Bili with no cookies — caller must `replace_cookies` before
+    /// any authenticated call. Used when the app starts without a `cookies.json`
+    /// so the user can log in from inside the app.
+    pub fn empty() -> Result<Self> {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::USER_AGENT, HeaderValue::from_static(UA));
+        headers.insert(
+            header::REFERER,
+            HeaderValue::from_static("https://www.bilibili.com/"),
+        );
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://www.bilibili.com"),
+        );
+        let client = Client::builder()
+            .default_headers(headers)
+            .timeout(Duration::from_secs(60))
+            .build()
+            .context("build empty reqwest client")?;
+        let cookies = Cookies {
+            raw: Vec::new(),
+            header: String::new(),
+            csrf: String::new(),
+            uid: String::new(),
+        };
+        let session = Arc::new(Session { client, cookies });
+        Ok(Self {
+            session: Arc::new(RwLock::new(session)),
+            wbi_cache: Arc::new(RwLock::new(None)),
+            cookies_path: Arc::new(RwLock::new(None)),
+        })
+    }
+
+    pub fn set_cookies_path(&self, path: PathBuf) {
+        *self.cookies_path.write() = Some(path);
+    }
+
+    /// Snapshot the active session. Cheap: `Arc::clone`. Callers should hold
+    /// the snapshot for the duration of one logical request — a concurrent
+    /// login can swap in a new session, but in-flight calls keep their pinned
+    /// snapshot.
+    pub fn session(&self) -> Arc<Session> {
+        self.session.read().clone()
+    }
+
+    pub fn http(&self) -> Client {
+        self.session().client.clone()
+    }
+
+    pub fn uid(&self) -> String {
+        self.session().cookies.uid.clone()
+    }
+
+    /// Replace the active session with one built from `raw` cookies, and
+    /// persist them to disk if a cookies path is known.
+    pub fn replace_cookies(&self, raw: Vec<RawCookie>) -> Result<()> {
+        let cookies = Cookies::from_raw(raw)?;
+        let path = self.cookies_path.read().clone();
+        if let Some(p) = path {
+            cookies.write_to(&p).with_context(|| {
+                format!("persist new cookies to {}", p.display())
+            })?;
+        }
+        let session = Session::build(cookies)?;
+        *self.session.write() = session;
+        // Force a fresh WBI fetch — keys travel with the session.
+        *self.wbi_cache.write() = None;
+        Ok(())
+    }
+
+    /// /x/web-interface/nav — user info + WBI keys.
+    ///
+    /// Bilibili returns `code=-101` ("账号未登录") for unauthenticated callers
+    /// but still includes `wbi_img` in `data`, so we accept code=-101 as a
+    /// legitimate "logged out" response. This is what lets the home feed (and
+    /// any other WBI-signed endpoint) work for guests.
     pub async fn nav(&self) -> Result<NavResponse> {
         let v: ApiEnvelope<NavData> = self
-            .client
+            .http()
             .get("https://api.bilibili.com/x/web-interface/nav")
             .send()
             .await?
             .json()
             .await?;
-        if v.code != 0 {
+        if v.code != 0 && v.code != -101 {
             return Err(anyhow!("nav failed: code={} msg={}", v.code, v.message));
         }
-        Ok(NavResponse { data: v.data.ok_or_else(|| anyhow!("nav: no data"))? })
+        Ok(NavResponse {
+            data: v.data.ok_or_else(|| anyhow!("nav: no data"))?,
+        })
     }
 
     async fn wbi_keys(&self) -> Result<WbiKeys> {
@@ -110,7 +226,7 @@ impl Bili {
         params.insert("wts".to_string(), wts);
 
         let v: ApiEnvelope<RcmdData> = self
-            .client
+            .http()
             .get("https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd")
             .query(&params)
             .send()
@@ -158,7 +274,7 @@ impl Bili {
         params.insert("wts".to_string(), wts);
 
         let v: ApiEnvelope<Value> = self
-            .client
+            .http()
             .get("https://api.bilibili.com/x/feed/dislike")
             .query(&params)
             .send()
@@ -175,7 +291,7 @@ impl Bili {
     /// Related videos for a given bvid
     pub async fn related(&self, bvid: &str) -> Result<Vec<Value>> {
         let v: ApiEnvelope<Vec<Value>> = self
-            .client
+            .http()
             .get("https://api.bilibili.com/x/web-interface/archive/related")
             .query(&[("bvid", bvid)])
             .send()
@@ -191,7 +307,7 @@ impl Bili {
     /// view info for a video — gives us the cid for the first part
     pub async fn view(&self, bvid: &str) -> Result<ViewData> {
         let v: ApiEnvelope<ViewData> = self
-            .client
+            .http()
             .get("https://api.bilibili.com/x/web-interface/view")
             .query(&[("bvid", bvid)])
             .send()
@@ -208,7 +324,7 @@ impl Bili {
     /// Pagination endpoint; `pn` is 1-based, `ps` ≤ 20.
     pub async fn comments(&self, aid: i64, pn: u32, ps: u32, sort: u32) -> Result<Value> {
         let v: ApiEnvelope<Value> = self
-            .client
+            .http()
             .get("https://api.bilibili.com/x/v2/reply")
             .query(&[
                 ("type", "1".to_string()),
@@ -231,7 +347,7 @@ impl Bili {
     pub async fn danmaku(&self, cid: i64) -> Result<Vec<crate::danmaku::Danmaku>> {
         let t0 = Instant::now();
         let bytes = self
-            .client
+            .http()
             .get("https://api.bilibili.com/x/v1/dm/list.so")
             .query(&[("oid", cid.to_string())])
             .send()
@@ -253,7 +369,7 @@ impl Bili {
     /// Unauthenticated callers still get code=0 with all fields zeroed.
     pub async fn archive_relation(&self, bvid: &str) -> Result<ArchiveRelation> {
         let v: ApiEnvelope<ArchiveRelationRaw> = self
-            .client
+            .http()
             .get("https://api.bilibili.com/x/web-interface/archive/relation")
             .query(&[("bvid", bvid)])
             .send()
@@ -278,7 +394,7 @@ impl Bili {
     /// /x/relation — relation to a specific user. `attribute` ∈ {2, 6} ⇒ 已关注.
     pub async fn user_relation(&self, mid: i64) -> Result<bool> {
         let v: ApiEnvelope<UserRelationRaw> = self
-            .client
+            .http()
             .get("https://api.bilibili.com/x/relation")
             .query(&[("fid", mid.to_string())])
             .send()
@@ -298,21 +414,23 @@ impl Bili {
 
     /// /x/web-interface/archive/like — toggle like (1 = like, 2 = un-like).
     pub async fn like_video(&self, bvid: &str, like: bool) -> Result<()> {
+        let csrf = self.session().cookies.csrf.clone();
         let mut form = BTreeMap::new();
         form.insert("bvid", bvid.to_string());
         form.insert("like", if like { "1" } else { "2" }.to_string());
-        form.insert("csrf", self.cookies.csrf.clone());
+        form.insert("csrf", csrf);
         self.post_form("https://api.bilibili.com/x/web-interface/archive/like", form, "like_video").await
     }
 
     /// /x/web-interface/coin/add — coin a video. multiply ∈ {1, 2}.
     pub async fn coin_video(&self, bvid: &str, multiply: u8, with_like: bool) -> Result<()> {
         let m = multiply.clamp(1, 2);
+        let csrf = self.session().cookies.csrf.clone();
         let mut form = BTreeMap::new();
         form.insert("bvid", bvid.to_string());
         form.insert("multiply", m.to_string());
         form.insert("select_like", if with_like { "1" } else { "0" }.to_string());
-        form.insert("csrf", self.cookies.csrf.clone());
+        form.insert("csrf", csrf);
         self.post_form("https://api.bilibili.com/x/web-interface/coin/add", form, "coin_video").await
     }
 
@@ -320,11 +438,12 @@ impl Bili {
     /// Server may partially succeed; the returned booleans report which actions
     /// went through.
     pub async fn triple_video(&self, bvid: &str) -> Result<TripleResult> {
+        let csrf = self.session().cookies.csrf.clone();
         let mut form = BTreeMap::new();
         form.insert("bvid", bvid.to_string());
-        form.insert("csrf", self.cookies.csrf.clone());
+        form.insert("csrf", csrf);
         let v: ApiEnvelope<TripleRaw> = self
-            .client
+            .http()
             .post("https://api.bilibili.com/x/web-interface/archive/like/triple")
             .form(&form)
             .send()
@@ -351,6 +470,7 @@ impl Bili {
     /// the web client posts from a video page; without them risk-control
     /// rejects the request on some accounts even though like/coin succeed.
     pub async fn relation_modify(&self, mid: i64, follow: bool) -> Result<()> {
+        let csrf = self.session().cookies.csrf.clone();
         let mut form = BTreeMap::new();
         form.insert("fid", mid.to_string());
         form.insert("act", if follow { "1" } else { "2" }.to_string());
@@ -361,7 +481,7 @@ impl Bili {
             "extend_content",
             format!(r#"{{"entity":"user","entity_id":{mid}}}"#),
         );
-        form.insert("csrf", self.cookies.csrf.clone());
+        form.insert("csrf", csrf);
         self.post_form("https://api.bilibili.com/x/relation/modify", form, "relation_modify").await
     }
 
@@ -372,7 +492,7 @@ impl Bili {
         op: &'static str,
     ) -> Result<()> {
         let v: ApiEnvelope<Value> = self
-            .client
+            .http()
             .post(url)
             .form(&form)
             .send()
@@ -405,7 +525,7 @@ impl Bili {
         params.insert("wts".to_string(), wts);
 
         let v: ApiEnvelope<Value> = self
-            .client
+            .http()
             .get("https://api.bilibili.com/x/player/wbi/playurl")
             .query(&params)
             .send()
@@ -424,6 +544,107 @@ impl Bili {
             "play_url"
         );
         Ok(data)
+    }
+
+    /// /x/space/wbi/acc/info + /x/relation/stat — public profile + follow counts.
+    pub async fn space_info(&self, mid: i64) -> Result<SpaceInfoData> {
+        let keys = self.wbi_keys().await?;
+        let mut params = BTreeMap::new();
+        params.insert("mid".to_string(), mid.to_string());
+        let (w_rid, wts) = wbi::sign(&mut params, &keys);
+        params.insert("w_rid".to_string(), w_rid);
+        params.insert("wts".to_string(), wts);
+
+        let http = self.http();
+        let f_info = http
+            .get("https://api.bilibili.com/x/space/wbi/acc/info")
+            .query(&params)
+            .send();
+        let f_stat = http
+            .get("https://api.bilibili.com/x/relation/stat")
+            .query(&[("vmid", mid.to_string())])
+            .send();
+        let (info_resp, stat_resp) = tokio::join!(f_info, f_stat);
+        let info_v: ApiEnvelope<Value> = info_resp?.json().await?;
+        if info_v.code != 0 {
+            return Err(anyhow!(
+                "space_info failed: code={} msg={}",
+                info_v.code,
+                info_v.message
+            ));
+        }
+        let info = info_v
+            .data
+            .ok_or_else(|| anyhow!("space_info: no data"))?;
+        let stat_v: ApiEnvelope<Value> = stat_resp?.json().await?;
+        let (following, follower) = if stat_v.code == 0 {
+            let d = stat_v.data.unwrap_or(Value::Null);
+            (
+                d.get("following").and_then(|v| v.as_i64()).unwrap_or(0),
+                d.get("follower").and_then(|v| v.as_i64()).unwrap_or(0),
+            )
+        } else {
+            (0, 0)
+        };
+
+        Ok(SpaceInfoData {
+            mid: info.get("mid").and_then(|v| v.as_i64()).unwrap_or(mid),
+            name: info
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            face: info
+                .get("face")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            sign: info
+                .get("sign")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            level: info.get("level").and_then(|v| v.as_i64()).unwrap_or(0),
+            top_photo: info
+                .get("top_photo")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            following,
+            follower,
+        })
+    }
+
+    /// /x/space/wbi/arc/search — paginated list of a user's published videos.
+    pub async fn space_videos(&self, mid: i64, pn: u32, ps: u32) -> Result<Value> {
+        let keys = self.wbi_keys().await?;
+        let mut params = BTreeMap::new();
+        params.insert("mid".to_string(), mid.to_string());
+        params.insert("pn".to_string(), pn.to_string());
+        params.insert("ps".to_string(), ps.to_string());
+        params.insert("order".to_string(), "pubdate".to_string());
+        params.insert("platform".to_string(), "web".to_string());
+        params.insert("web_location".to_string(), "1550101".to_string());
+        let (w_rid, wts) = wbi::sign(&mut params, &keys);
+        params.insert("w_rid".to_string(), w_rid);
+        params.insert("wts".to_string(), wts);
+
+        let v: ApiEnvelope<Value> = self
+            .http()
+            .get("https://api.bilibili.com/x/space/wbi/arc/search")
+            .query(&params)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!(
+                "space_videos failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
+        }
+        v.data.ok_or_else(|| anyhow!("space_videos: no data"))
     }
 }
 
@@ -552,4 +773,15 @@ pub struct ViewStat {
     pub like: i64,
     #[serde(default)]
     pub share: i64,
+}
+
+pub struct SpaceInfoData {
+    pub mid: i64,
+    pub name: String,
+    pub face: String,
+    pub sign: String,
+    pub level: i64,
+    pub top_photo: String,
+    pub following: i64,
+    pub follower: i64,
 }

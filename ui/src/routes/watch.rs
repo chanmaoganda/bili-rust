@@ -12,6 +12,7 @@ use crate::keys::{is_typing, KeydownGuard};
 use crate::types::{fmt_ctime, fmt_views, ActionState, VideoCard};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos_router::components::A;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlInputElement, HtmlSelectElement, HtmlVideoElement, KeyboardEvent};
@@ -594,8 +595,12 @@ pub fn Watch() -> impl IntoView {
                                     </button>
                                 </div>
                                 <div class="up">
-                                    <img src=up_face_view alt="" />
-                                    <span>{up_name_view}</span>
+                                    <A href=move || format!("/space/{}", up_mid.get())>
+                                        <span class="up-link">
+                                            <img src=up_face_view alt="" />
+                                            <span>{up_name_view}</span>
+                                        </span>
+                                    </A>
                                     <button
                                         class="follow-btn"
                                         class:is-active=move || action.get().followed

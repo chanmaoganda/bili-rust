@@ -173,3 +173,41 @@ pub async fn follow_user(mid: i64, follow: bool) -> Result<(), String> {
 pub async fn get_decoder_probe() -> Result<DecoderProbe, String> {
     invoke("get_decoder_probe", NoArgs {}).await
 }
+
+#[derive(Serialize)]
+struct MidArgs {
+    mid: i64,
+}
+
+#[derive(Serialize)]
+struct SpaceVideosArgs {
+    mid: i64,
+    pn: u32,
+    ps: u32,
+}
+
+pub async fn is_following(mid: i64) -> Result<bool, String> {
+    invoke("is_following", MidArgs { mid }).await
+}
+
+pub async fn get_space_info(mid: i64) -> Result<SpaceInfo, String> {
+    invoke("get_space_info", MidArgs { mid }).await
+}
+
+pub async fn get_space_videos(mid: i64, pn: u32, ps: u32) -> Result<SpaceVideoPage, String> {
+    invoke("get_space_videos", SpaceVideosArgs { mid, pn, ps }).await
+}
+
+pub async fn qr_login_start() -> Result<QrStart, String> {
+    invoke("qr_login_start", NoArgs {}).await
+}
+
+#[derive(Serialize)]
+struct QrPollArgs<'a> {
+    #[serde(rename = "qrcodeKey")]
+    qrcode_key: &'a str,
+}
+
+pub async fn qr_login_poll(qrcode_key: &str) -> Result<QrPoll, String> {
+    invoke("qr_login_poll", QrPollArgs { qrcode_key }).await
+}

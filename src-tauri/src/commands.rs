@@ -1,4 +1,5 @@
 use crate::api::Bili;
+use crate::auth::{self, QrStatus};
 use crate::danmaku::Danmaku;
 use crate::stream;
 use serde::Serialize;
@@ -414,6 +415,125 @@ pub async fn follow_user(
 }
 
 #[tauri::command]
+pub async fn is_following(state: BiliState<'_>, mid: i64) -> Result<bool, String> {
+    if mid <= 0 {
+        return Ok(false);
+    }
+    state.user_relation(mid).await.map_err(err)
+}
+
+#[derive(Serialize)]
+pub struct SpaceInfo {
+    pub mid: i64,
+    pub name: String,
+    pub face: String,
+    pub sign: String,
+    pub level: i64,
+    pub top_photo: String,
+    pub following: i64,
+    pub follower: i64,
+}
+
+#[tauri::command]
+pub async fn get_space_info(state: BiliState<'_>, mid: i64) -> Result<SpaceInfo, String> {
+    let s = state.space_info(mid).await.map_err(err)?;
+    Ok(SpaceInfo {
+        mid: s.mid,
+        name: s.name,
+        face: proxy_image(&s.face),
+        sign: s.sign,
+        level: s.level,
+        top_photo: if s.top_photo.is_empty() {
+            String::new()
+        } else {
+            proxy_image(&s.top_photo)
+        },
+        following: s.following,
+        follower: s.follower,
+    })
+}
+
+#[derive(Serialize)]
+pub struct SpaceVideoPage {
+    pub list: Vec<VideoCard>,
+    pub page: u32,
+    pub size: u32,
+    pub count: i64,
+}
+
+#[tauri::command]
+pub async fn get_space_videos(
+    state: BiliState<'_>,
+    mid: i64,
+    pn: u32,
+    ps: u32,
+) -> Result<SpaceVideoPage, String> {
+    let raw = state.space_videos(mid, pn, ps).await.map_err(err)?;
+    let count = raw
+        .pointer("/page/count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let page = raw
+        .pointer("/page/pn")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(pn as u64) as u32;
+    let size = raw
+        .pointer("/page/ps")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(ps as u64) as u32;
+    let list: Vec<VideoCard> = raw
+        .pointer("/list/vlist")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| card_from_space_item(v, mid)).collect())
+        .unwrap_or_default();
+    Ok(SpaceVideoPage {
+        list,
+        page,
+        size,
+        count,
+    })
+}
+
+#[derive(Serialize)]
+pub struct QrStart {
+    pub url: String,
+    pub qrcode_key: String,
+}
+
+#[tauri::command]
+pub async fn qr_login_start() -> Result<QrStart, String> {
+    let s = auth::qr_generate().await.map_err(err)?;
+    Ok(QrStart {
+        url: s.url,
+        qrcode_key: s.qrcode_key,
+    })
+}
+
+#[derive(Serialize)]
+pub struct QrPoll {
+    /// "scanning" | "scanned" | "confirmed" | "expired"
+    pub status: &'static str,
+}
+
+#[tauri::command]
+pub async fn qr_login_poll(
+    state: BiliState<'_>,
+    qrcode_key: String,
+) -> Result<QrPoll, String> {
+    let status = auth::qr_poll(&qrcode_key).await.map_err(err)?;
+    let label = match status {
+        QrStatus::Scanning => "scanning",
+        QrStatus::Scanned => "scanned",
+        QrStatus::Expired => "expired",
+        QrStatus::Confirmed { cookies } => {
+            state.replace_cookies(cookies).map_err(err)?;
+            "confirmed"
+        }
+    };
+    Ok(QrPoll { status: label })
+}
+
+#[tauri::command]
 pub async fn get_comments(
     state: BiliState<'_>,
     bvid: String,
@@ -759,6 +879,64 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
         tname,
         tid,
     })
+}
+
+/// space/wbi/arc/search returns a different shape: `bvid`, `aid`, `pic`,
+/// `title`, `play` (view count), `length` (duration as `mm:ss` string),
+/// `author`, `mid` (uploader). No cid/face per item — we fill those in from
+/// outer state and let /play_info backfill cid on click.
+fn card_from_space_item(item: &Value, fallback_mid: i64) -> Option<VideoCard> {
+    let bvid = item.get("bvid").and_then(|v| v.as_str())?.to_string();
+    let pic = item.get("pic").and_then(|v| v.as_str()).unwrap_or("");
+    let length = item
+        .get("length")
+        .and_then(|v| v.as_str())
+        .unwrap_or("0:00");
+    let duration = parse_mmss(length);
+    Some(VideoCard {
+        bvid,
+        aid: item.get("aid").and_then(|v| v.as_i64()).unwrap_or(0),
+        cid: 0,
+        title: item
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        pic: proxy_image(pic),
+        duration,
+        view: item.get("play").and_then(|v| v.as_i64()).unwrap_or(0),
+        up_name: item
+            .get("author")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        up_face: String::new(),
+        up_mid: item
+            .get("mid")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(fallback_mid),
+        rcmd_reason: None,
+        tname: item
+            .get("typeid")
+            .and_then(|v| v.as_i64())
+            .map(|_| {
+                item.get("typename")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .filter(|s| !s.is_empty()),
+        tid: item.get("typeid").and_then(|v| v.as_i64()),
+    })
+}
+
+fn parse_mmss(s: &str) -> i64 {
+    let mut total: i64 = 0;
+    for part in s.split(':') {
+        let n: i64 = part.parse().unwrap_or(0);
+        total = total * 60 + n;
+    }
+    total
 }
 
 fn card_from_related_item(item: &Value) -> Option<VideoCard> {

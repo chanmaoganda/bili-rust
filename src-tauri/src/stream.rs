@@ -120,7 +120,7 @@ async fn serve(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("-");
 
-    let mut req = bili.client.get(&real);
+    let mut req = bili.http().get(&real);
     // Images are returned whole; only segments need byte-range passthrough.
     if matches!(kind, Kind::Segment) {
         if let Some(rng) = request.headers().get(header::RANGE) {

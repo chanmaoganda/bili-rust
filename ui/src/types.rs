@@ -163,6 +163,38 @@ pub struct CommentPage {
     pub replies: Vec<Comment>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct SpaceInfo {
+    pub mid: i64,
+    pub name: String,
+    pub face: String,
+    pub sign: String,
+    pub level: i64,
+    #[serde(default)]
+    pub top_photo: String,
+    pub following: i64,
+    pub follower: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct SpaceVideoPage {
+    pub list: Vec<VideoCard>,
+    pub page: u32,
+    pub size: u32,
+    pub count: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct QrStart {
+    pub url: String,
+    pub qrcode_key: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct QrPoll {
+    pub status: String,
+}
+
 /// Format a Unix-seconds timestamp as a relative Chinese label.
 pub fn fmt_ctime(ctime: i64) -> String {
     if ctime <= 0 {

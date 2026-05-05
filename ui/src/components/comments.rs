@@ -1,6 +1,7 @@
 use crate::api;
 use crate::types::{fmt_ctime, Comment};
 use leptos::prelude::*;
+use leptos_router::components::A;
 
 #[component]
 pub fn Comments(#[prop(into)] bvid: Signal<String>) -> impl IntoView {
@@ -130,12 +131,18 @@ fn CommentItem(c: Comment) -> impl IntoView {
     } = c;
     let meta = meta_for(ctime, &location, like);
     let has_replies = !replies.is_empty();
+    let href = format!("/space/{}", member.mid);
+    let href_name = href.clone();
 
     view! {
         <div class="comment-item">
-            <img class="avatar" src=member.face alt="" />
+            <A href=href>
+                <img class="avatar clickable" src=member.face alt="" />
+            </A>
             <div class="comment-body">
-                <div class="comment-name">{member.uname}</div>
+                <A href=href_name>
+                    <div class="comment-name">{member.uname}</div>
+                </A>
                 <div class="comment-message">{message}</div>
                 <div class="comment-meta">{meta}</div>
                 {has_replies.then(|| view! {
@@ -163,12 +170,18 @@ fn SubReply(c: Comment) -> impl IntoView {
         ..
     } = c;
     let meta = meta_for(ctime, &location, like);
+    let href = format!("/space/{}", member.mid);
+    let href_name = href.clone();
 
     view! {
         <div class="comment-item">
-            <img class="avatar" src=member.face alt="" />
+            <A href=href>
+                <img class="avatar clickable" src=member.face alt="" />
+            </A>
             <div class="comment-body">
-                <div class="comment-name">{member.uname}</div>
+                <A href=href_name>
+                    <div class="comment-name">{member.uname}</div>
+                </A>
                 <div class="comment-message">{message}</div>
                 <div class="comment-meta">{meta}</div>
             </div>

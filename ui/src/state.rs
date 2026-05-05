@@ -1,6 +1,25 @@
 use crate::types::VideoCard;
 use leptos::prelude::*;
 
+/// Global "login epoch" — bumped after a successful QR login so any
+/// `LocalResource` that depends on `get_user_info()` (Header, Space me-check,
+/// etc.) re-fetches without needing a remount/refresh. Provided as app-level
+/// context in `app.rs`.
+#[derive(Clone, Copy)]
+pub struct LoginVersion(pub RwSignal<u32>);
+
+impl LoginVersion {
+    pub fn new() -> Self {
+        Self(RwSignal::new(0))
+    }
+    pub fn bump(&self) {
+        self.0.update(|v| *v += 1);
+    }
+    pub fn get(&self) -> u32 {
+        self.0.get()
+    }
+}
+
 // Recommendation feed state lifted to App scope so it survives Home remounts
 // (e.g. after navigating back from /watch/:bvid via mouse4 / Alt+Left).
 //
