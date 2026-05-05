@@ -1016,10 +1016,7 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
         .pointer("/owner/face")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let rcmd_reason = item
-        .pointer("/rcmd_reason/content")
-        .and_then(|v| v.as_str())
-        .and_then(nonempty);
+    let rcmd_reason = rcmd_reason_label(item);
     let tname = item
         .get("tname")
         .and_then(|v| v.as_str())
@@ -1058,6 +1055,33 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
         add_at: None,
         progress: None,
     })
+}
+
+/// Pick a short label for the recommend-reason badge shown on each card.
+///
+/// Per bilibili-API-collect, `rcmd_reason` only has three documented states:
+///   `reason_type = 0`: no reason (skip badge).
+///   `reason_type = 1`: 已关注 (always paired with `is_followed = 1`).
+///   `reason_type = 3`: 高点赞量; the actual label lives in `content` as e.g.
+///                      "2万点赞" — Bilibili picks the wording per card.
+/// We prefer `content` when present (works for type 3 and any future shape
+/// where Bilibili sends prose) and fall back to "已关注" only for type 1.
+/// Unknown types intentionally get no badge.
+fn rcmd_reason_label(item: &Value) -> Option<String> {
+    if let Some(s) = item
+        .pointer("/rcmd_reason/content")
+        .and_then(|v| v.as_str())
+        .and_then(nonempty)
+    {
+        return Some(s);
+    }
+    let reason_type = item
+        .pointer("/rcmd_reason/reason_type")
+        .and_then(|v| v.as_i64())?;
+    if reason_type == 1 {
+        return Some("已关注".to_string());
+    }
+    None
 }
 
 /// space/wbi/arc/search returns a different shape: `bvid`, `aid`, `pic`,
