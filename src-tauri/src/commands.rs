@@ -120,6 +120,18 @@ pub struct DashTrack {
     pub index_range: String, // "start-end"
 }
 
+#[derive(Serialize)]
+pub struct DecoderProbe {
+    /// GStreamer hardware decoder element factories detected via gst-inspect-1.0.
+    pub hw_decoders: Vec<String>,
+    pub libva_driver: Option<String>,
+    pub gst_vaapi_all_drivers: Option<String>,
+    pub webkit_disable_compositing: Option<String>,
+    /// `false` if `gst-inspect-1.0` is missing or failed; `error` carries the reason.
+    pub gst_inspect_ok: bool,
+    pub error: Option<String>,
+}
+
 #[tauri::command]
 pub async fn get_user_info(state: BiliState<'_>) -> Result<UserInfo, String> {
     let nav = state.nav().await.map_err(err)?;
@@ -312,6 +324,93 @@ pub async fn get_view_info(state: BiliState<'_>, bvid: String) -> Result<ViewInf
 #[tauri::command]
 pub async fn get_danmaku(state: BiliState<'_>, cid: i64) -> Result<Vec<Danmaku>, String> {
     state.danmaku(cid).await.map_err(err)
+}
+
+#[derive(Serialize, Default)]
+pub struct ActionState {
+    pub liked: bool,
+    pub coined: i64,
+    pub favorited: bool,
+    pub followed: bool,
+}
+
+#[derive(Serialize)]
+pub struct TripleResult {
+    pub like: bool,
+    pub coin: bool,
+    pub fav: bool,
+}
+
+#[tauri::command]
+pub async fn get_action_state(
+    state: BiliState<'_>,
+    bvid: String,
+    mid: i64,
+) -> Result<ActionState, String> {
+    // Fan out: archive/relation gives like/coin/fav for the video, /x/relation
+    // gives the follow bit for the uploader. Run them concurrently — they hit
+    // different endpoints and there's no ordering dependency.
+    let bili = state.inner().clone();
+    let bili2 = bili.clone();
+    let bv = bvid.clone();
+    let f_archive = async move { bili.archive_relation(&bv).await };
+    let f_user = async move {
+        if mid > 0 {
+            bili2.user_relation(mid).await
+        } else {
+            Ok(false)
+        }
+    };
+    let (ar, fol) = tokio::join!(f_archive, f_user);
+    let ar = ar.map_err(err)?;
+    let followed = fol.map_err(err)?;
+    Ok(ActionState {
+        liked: ar.liked,
+        coined: ar.coined,
+        favorited: ar.favorited,
+        followed,
+    })
+}
+
+#[tauri::command]
+pub async fn like_video(
+    state: BiliState<'_>,
+    bvid: String,
+    like: bool,
+) -> Result<(), String> {
+    state.like_video(&bvid, like).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn coin_video(
+    state: BiliState<'_>,
+    bvid: String,
+    multiply: u8,
+    with_like: bool,
+) -> Result<(), String> {
+    state
+        .coin_video(&bvid, multiply, with_like)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn triple_video(state: BiliState<'_>, bvid: String) -> Result<TripleResult, String> {
+    let r = state.triple_video(&bvid).await.map_err(err)?;
+    Ok(TripleResult {
+        like: r.like,
+        coin: r.coin,
+        fav: r.fav,
+    })
+}
+
+#[tauri::command]
+pub async fn follow_user(
+    state: BiliState<'_>,
+    mid: i64,
+    follow: bool,
+) -> Result<(), String> {
+    state.relation_modify(mid, follow).await.map_err(err)
 }
 
 #[tauri::command]

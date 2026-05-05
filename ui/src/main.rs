@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod components;
+mod keys;
 mod prefs;
 mod routes;
 mod state;

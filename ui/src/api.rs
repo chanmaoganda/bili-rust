@@ -123,3 +123,49 @@ pub async fn get_danmaku(cid: i64) -> Result<Vec<Danmaku>, String> {
 pub async fn get_comments(bvid: &str, pn: u32, sort: u32) -> Result<CommentPage, String> {
     invoke("get_comments", CommentArgs { bvid, pn, sort }).await
 }
+
+#[derive(Serialize)]
+struct ActionStateArgs<'a> {
+    bvid: &'a str,
+    mid: i64,
+}
+
+#[derive(Serialize)]
+struct LikeArgs<'a> {
+    bvid: &'a str,
+    like: bool,
+}
+
+#[derive(Serialize)]
+struct CoinArgs<'a> {
+    bvid: &'a str,
+    multiply: u8,
+    #[serde(rename = "withLike")]
+    with_like: bool,
+}
+
+#[derive(Serialize)]
+struct FollowArgs {
+    mid: i64,
+    follow: bool,
+}
+
+pub async fn get_action_state(bvid: &str, mid: i64) -> Result<ActionState, String> {
+    invoke("get_action_state", ActionStateArgs { bvid, mid }).await
+}
+
+pub async fn like_video(bvid: &str, like: bool) -> Result<(), String> {
+    invoke("like_video", LikeArgs { bvid, like }).await
+}
+
+pub async fn coin_video(bvid: &str, multiply: u8, with_like: bool) -> Result<(), String> {
+    invoke("coin_video", CoinArgs { bvid, multiply, with_like }).await
+}
+
+pub async fn triple_video(bvid: &str) -> Result<TripleResult, String> {
+    invoke("triple_video", BvidArgs { bvid }).await
+}
+
+pub async fn follow_user(mid: i64, follow: bool) -> Result<(), String> {
+    invoke("follow_user", FollowArgs { mid, follow }).await
+}

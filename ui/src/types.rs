@@ -116,6 +116,28 @@ pub struct Comment {
     pub location: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
+pub struct ActionState {
+    #[serde(default)]
+    pub liked: bool,
+    #[serde(default)]
+    pub coined: i64,
+    #[serde(default)]
+    pub favorited: bool,
+    #[serde(default)]
+    pub followed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
+pub struct TripleResult {
+    #[serde(default)]
+    pub like: bool,
+    #[serde(default)]
+    pub coin: bool,
+    #[serde(default)]
+    pub fav: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct CommentPage {
     pub page: u32,

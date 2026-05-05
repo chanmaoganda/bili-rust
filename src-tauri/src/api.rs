@@ -249,6 +249,134 @@ impl Bili {
         Ok(out)
     }
 
+    /// /x/web-interface/archive/relation — current user's relation to a video.
+    /// Unauthenticated callers still get code=0 with all fields zeroed.
+    pub async fn archive_relation(&self, bvid: &str) -> Result<ArchiveRelation> {
+        let v: ApiEnvelope<ArchiveRelationRaw> = self
+            .client
+            .get("https://api.bilibili.com/x/web-interface/archive/relation")
+            .query(&[("bvid", bvid)])
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!(
+                "archive_relation failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
+        }
+        let r = v.data.unwrap_or_default();
+        Ok(ArchiveRelation {
+            liked: r.like != 0,
+            coined: r.coin_number,
+            favorited: r.favorite != 0,
+        })
+    }
+
+    /// /x/relation — relation to a specific user. `attribute` ∈ {2, 6} ⇒ 已关注.
+    pub async fn user_relation(&self, mid: i64) -> Result<bool> {
+        let v: ApiEnvelope<UserRelationRaw> = self
+            .client
+            .get("https://api.bilibili.com/x/relation")
+            .query(&[("fid", mid.to_string())])
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!(
+                "user_relation failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
+        }
+        let attr = v.data.map(|d| d.attribute).unwrap_or(0);
+        Ok(attr == 2 || attr == 6)
+    }
+
+    /// /x/web-interface/archive/like — toggle like (1 = like, 2 = un-like).
+    pub async fn like_video(&self, bvid: &str, like: bool) -> Result<()> {
+        let mut form = BTreeMap::new();
+        form.insert("bvid", bvid.to_string());
+        form.insert("like", if like { "1" } else { "2" }.to_string());
+        form.insert("csrf", self.cookies.csrf.clone());
+        self.post_form("https://api.bilibili.com/x/web-interface/archive/like", form, "like_video").await
+    }
+
+    /// /x/web-interface/coin/add — coin a video. multiply ∈ {1, 2}.
+    pub async fn coin_video(&self, bvid: &str, multiply: u8, with_like: bool) -> Result<()> {
+        let m = multiply.clamp(1, 2);
+        let mut form = BTreeMap::new();
+        form.insert("bvid", bvid.to_string());
+        form.insert("multiply", m.to_string());
+        form.insert("select_like", if with_like { "1" } else { "0" }.to_string());
+        form.insert("csrf", self.cookies.csrf.clone());
+        self.post_form("https://api.bilibili.com/x/web-interface/coin/add", form, "coin_video").await
+    }
+
+    /// /x/web-interface/archive/like/triple — like + coin + favorite in one shot.
+    /// Server may partially succeed; the returned booleans report which actions
+    /// went through.
+    pub async fn triple_video(&self, bvid: &str) -> Result<TripleResult> {
+        let mut form = BTreeMap::new();
+        form.insert("bvid", bvid.to_string());
+        form.insert("csrf", self.cookies.csrf.clone());
+        let v: ApiEnvelope<TripleRaw> = self
+            .client
+            .post("https://api.bilibili.com/x/web-interface/archive/like/triple")
+            .form(&form)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!(
+                "triple_video failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
+        }
+        let r = v.data.unwrap_or_default();
+        Ok(TripleResult {
+            like: r.like,
+            coin: r.coin,
+            fav: r.fav,
+        })
+    }
+
+    /// /x/relation/modify — follow (act=1) or unfollow (act=2). re_src=11 mimics
+    /// the web client's source tag.
+    pub async fn relation_modify(&self, mid: i64, follow: bool) -> Result<()> {
+        let mut form = BTreeMap::new();
+        form.insert("fid", mid.to_string());
+        form.insert("act", if follow { "1" } else { "2" }.to_string());
+        form.insert("re_src", "11".to_string());
+        form.insert("csrf", self.cookies.csrf.clone());
+        self.post_form("https://api.bilibili.com/x/relation/modify", form, "relation_modify").await
+    }
+
+    async fn post_form(
+        &self,
+        url: &str,
+        form: BTreeMap<&str, String>,
+        op: &'static str,
+    ) -> Result<()> {
+        let v: ApiEnvelope<Value> = self
+            .client
+            .post(url)
+            .form(&form)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!("{op} failed: code={} msg={}", v.code, v.message));
+        }
+        Ok(())
+    }
+
     /// /x/player/wbi/playurl — DASH manifest
     pub async fn play_url(&self, bvid: &str, cid: i64, qn: u32) -> Result<Value> {
         let t0 = Instant::now();
@@ -360,6 +488,44 @@ pub struct ViewOwner {
     pub name: String,
     #[serde(default)]
     pub face: String,
+}
+
+#[derive(Deserialize, Default)]
+struct ArchiveRelationRaw {
+    #[serde(default)]
+    like: i64,
+    #[serde(default, rename = "coin_number")]
+    coin_number: i64,
+    #[serde(default)]
+    favorite: i64,
+}
+
+pub struct ArchiveRelation {
+    pub liked: bool,
+    pub coined: i64,
+    pub favorited: bool,
+}
+
+#[derive(Deserialize, Default)]
+struct UserRelationRaw {
+    #[serde(default)]
+    attribute: i64,
+}
+
+#[derive(Deserialize, Default)]
+struct TripleRaw {
+    #[serde(default)]
+    like: bool,
+    #[serde(default)]
+    coin: bool,
+    #[serde(default)]
+    fav: bool,
+}
+
+pub struct TripleResult {
+    pub like: bool,
+    pub coin: bool,
+    pub fav: bool,
 }
 
 #[derive(Deserialize, Debug, Default)]
