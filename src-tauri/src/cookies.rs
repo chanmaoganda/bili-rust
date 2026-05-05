@@ -65,4 +65,18 @@ impl Cookies {
             .with_context(|| format!("write cookies to {}", path.as_ref().display()))?;
         Ok(())
     }
+
+    /// Merge `extras` into the cookie set, only adding entries whose name is
+    /// not already present — never overwrite a real value that came from a
+    /// browser. Returns a fresh `Cookies` with `header`/`csrf`/`uid`
+    /// re-derived from the merged set.
+    pub fn with_extra(self, extras: Vec<RawCookie>) -> Result<Self> {
+        let Cookies { mut raw, .. } = self;
+        for c in extras {
+            if !raw.iter().any(|existing| existing.name == c.name) {
+                raw.push(c);
+            }
+        }
+        Self::from_raw(raw)
+    }
 }

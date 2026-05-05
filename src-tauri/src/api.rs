@@ -152,7 +152,103 @@ impl Bili {
         *self.session.write() = session;
         // Force a fresh WBI fetch — keys travel with the session.
         *self.wbi_cache.write() = None;
+        // QR login only captures auth cookies — re-attach fingerprint cookies
+        // in the background so the new session is risk-control-clean too.
+        let me = self.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = me.ensure_fingerprint_cookies().await {
+                tracing::warn!(error = %e,
+                    "ensure_fingerprint_cookies after login failed");
+            }
+        });
         Ok(())
+    }
+
+    /// Bilibili's risk-control checks the session for the device-fingerprint
+    /// cookies a real browser carries (`buvid3`, `buvid4`, `b_nut`, `_uuid`).
+    /// The QR-login flow only captures auth cookies from passport.bilibili.com
+    /// so these are missing on first run, and write endpoints like
+    /// `archive/like` start failing with `code=-403 账号异常`. This populates
+    /// any of the four that are missing — `buvid3`/`buvid4` from Bilibili's
+    /// public `finger/spi` endpoint, `b_nut`/`_uuid` synthesized locally —
+    /// and atomically swaps in a session that includes them. Idempotent: a
+    /// second call when all four are present is a no-op.
+    pub async fn ensure_fingerprint_cookies(&self) -> Result<()> {
+        let snap = self.session();
+        let names: std::collections::HashSet<&str> =
+            snap.cookies.raw.iter().map(|c| c.name.as_str()).collect();
+        let need_buvid = !names.contains("buvid3") || !names.contains("buvid4");
+        let need_b_nut = !names.contains("b_nut");
+        let need_uuid = !names.contains("_uuid");
+        if !need_buvid && !need_b_nut && !need_uuid {
+            return Ok(());
+        }
+
+        let mut extras: Vec<RawCookie> = Vec::new();
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        if need_buvid {
+            match self.fetch_buvids().await {
+                Ok((b3, b4)) => {
+                    if !names.contains("buvid3") {
+                        extras.push(make_domain_cookie("buvid3", &b3));
+                    }
+                    if !names.contains("buvid4") {
+                        extras.push(make_domain_cookie("buvid4", &b4));
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "fetch_buvids failed; skipping buvid3/buvid4");
+                }
+            }
+        }
+        if need_b_nut {
+            extras.push(make_domain_cookie("b_nut", &now_secs.to_string()));
+        }
+        if need_uuid {
+            extras.push(make_domain_cookie("_uuid", &synth_uuid_cookie()));
+        }
+        if extras.is_empty() {
+            return Ok(());
+        }
+
+        let added: Vec<String> = extras.iter().map(|c| c.name.clone()).collect();
+        let merged = Cookies::from_raw(snap.cookies.raw.clone())?.with_extra(extras)?;
+        let path = self.cookies_path.read().clone();
+        if let Some(p) = path {
+            if let Err(e) = merged.write_to(&p) {
+                tracing::warn!(error = %e, path = %p.display(),
+                    "persist fingerprint cookies failed (continuing in memory)");
+            }
+        }
+        let session = Session::build(merged)?;
+        *self.session.write() = session;
+        *self.wbi_cache.write() = None;
+        tracing::info!(added = ?added, "fingerprint cookies attached");
+        Ok(())
+    }
+
+    async fn fetch_buvids(&self) -> Result<(String, String)> {
+        #[derive(Deserialize)]
+        struct Spi {
+            b_3: String,
+            b_4: String,
+        }
+        let v: ApiEnvelope<Spi> = self
+            .http()
+            .get("https://api.bilibili.com/x/frontend/finger/spi")
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!("finger/spi failed: code={} msg={}", v.code, v.message));
+        }
+        let d = v.data.ok_or_else(|| anyhow!("finger/spi: no data"))?;
+        Ok((d.b_3, d.b_4))
     }
 
     /// /x/web-interface/nav — user info + WBI keys.
@@ -403,14 +499,14 @@ impl Bili {
         tracing::debug!(
             bvid,
             like = r.like,
-            coin_number = r.coin_number,
+            coin = r.coin,
             favorite = r.favorite,
             "archive_relation"
         );
         Ok(ArchiveRelation {
-            liked: r.like != 0,
-            coined: r.coin_number,
-            favorited: r.favorite != 0,
+            liked: r.like,
+            coined: r.coin,
+            favorited: r.favorite,
         })
     }
 
@@ -1093,6 +1189,53 @@ fn ramval_for(uid: &str) -> u64 {
     mixed % 9_000_000 + 1_000_000
 }
 
+fn make_domain_cookie(name: &str, value: &str) -> RawCookie {
+    RawCookie {
+        name: name.to_string(),
+        value: value.to_string(),
+        domain: Some(".bilibili.com".to_string()),
+        path: Some("/".to_string()),
+        expires: None,
+        http_only: Some(false),
+        secure: Some(true),
+        same_site: None,
+    }
+}
+
+/// Web client `_uuid` shape: 5 uppercase-hex blocks `8-4-4-4-12` followed by
+/// a zero-padded 5-digit ms-of-second and the literal `infoc`. Risk-control
+/// only checks the shape, not the bytes — but any deviation from this layout
+/// is itself a signal, so match it exactly.
+fn synth_uuid_cookie() -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut h = DefaultHasher::new();
+    now.as_nanos().hash(&mut h);
+    n.hash(&mut h);
+    let a = h.finish();
+    let mut h2 = DefaultHasher::new();
+    a.hash(&mut h2);
+    (a ^ 0x9E3779B97F4A7C15).hash(&mut h2);
+    let b = h2.finish();
+    let hex32 = format!("{:016X}{:016X}", a, b);
+    let ms5 = (now.subsec_millis() as u64 * 100 + (n % 100)) % 100_000;
+    format!(
+        "{}-{}-{}-{}-{}{:05}infoc",
+        &hex32[0..8],
+        &hex32[8..12],
+        &hex32[12..16],
+        &hex32[16..20],
+        &hex32[20..32],
+        ms5
+    )
+}
+
 #[derive(Deserialize)]
 struct ApiEnvelope<T> {
     code: i64,
@@ -1167,11 +1310,11 @@ pub struct ViewOwner {
 #[derive(Deserialize, Default)]
 struct ArchiveRelationRaw {
     #[serde(default)]
-    like: i64,
-    #[serde(default, rename = "coin_number")]
-    coin_number: i64,
+    like: bool,
     #[serde(default)]
-    favorite: i64,
+    coin: i64,
+    #[serde(default)]
+    favorite: bool,
 }
 
 pub struct ArchiveRelation {

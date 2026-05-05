@@ -40,6 +40,17 @@ pub fn run() {
     };
     bili.set_cookies_path(cookie_path);
 
+    // Best-effort: attach `buvid3/buvid4/b_nut/_uuid` if the saved cookies
+    // are missing them. Bilibili's risk-control rejects write endpoints
+    // (`archive/like`, `coin/add`, `relation/modify`) with `code=-403
+    // 账号异常` when these device-fingerprint cookies aren't present.
+    let bili_for_fingerprint = bili.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = bili_for_fingerprint.ensure_fingerprint_cookies().await {
+            tracing::warn!(error = %e, "ensure_fingerprint_cookies failed");
+        }
+    });
+
     let bili_for_scheme = bili.clone();
     let bili_for_img = bili.clone();
 
