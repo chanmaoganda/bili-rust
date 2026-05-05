@@ -12,29 +12,70 @@ pub fn rewrite(url: &str) -> String {
     format!("bilistream://seg/{b}")
 }
 
-/// Tauri URI scheme handler. Invoked from the GTK main thread, so we MUST
-/// (a) spawn via Tauri's runtime (no Tokio context on this thread), and
-/// (b) never let a panic cross the C FFI boundary.
+pub fn rewrite_image(url: &str) -> String {
+    let b = URL_SAFE_NO_PAD.encode(url.as_bytes());
+    format!("biliimg://img/{b}")
+}
+
+#[derive(Clone, Copy)]
+enum Kind {
+    Segment,
+    Image,
+}
+
+impl Kind {
+    fn label(self) -> &'static str {
+        match self {
+            Kind::Segment => "bilistream",
+            Kind::Image => "biliimg",
+        }
+    }
+}
+
+/// Tauri URI scheme handler for stream segments. Invoked from the GTK main
+/// thread, so we MUST (a) spawn via Tauri's runtime (no Tokio context on this
+/// thread), and (b) never let a panic cross the C FFI boundary.
 pub fn handle(
+    bili: Arc<Bili>,
+    ctx: UriSchemeContext<'_, Wry>,
+    request: http::Request<Vec<u8>>,
+    responder: UriSchemeResponder,
+) {
+    dispatch(Kind::Segment, bili, ctx, request, responder);
+}
+
+/// Tauri URI scheme handler for images proxied through the Bili HTTP client
+/// (which carries the Referer/Origin/Cookie headers Bilibili's CDN requires).
+pub fn handle_image(
+    bili: Arc<Bili>,
+    ctx: UriSchemeContext<'_, Wry>,
+    request: http::Request<Vec<u8>>,
+    responder: UriSchemeResponder,
+) {
+    dispatch(Kind::Image, bili, ctx, request, responder);
+}
+
+fn dispatch(
+    kind: Kind,
     bili: Arc<Bili>,
     _ctx: UriSchemeContext<'_, Wry>,
     request: http::Request<Vec<u8>>,
     responder: UriSchemeResponder,
 ) {
     tauri::async_runtime::spawn(async move {
-        let result = std::panic::AssertUnwindSafe(serve(&bili, &request))
+        let result = std::panic::AssertUnwindSafe(serve(kind, &bili, &request))
             .catch_unwind()
             .await;
 
         let resp = match result {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
-                tracing::error!("bilistream error: {e:#}");
+                tracing::error!("{} error: {e:#}", kind.label());
                 error_response(StatusCode::BAD_GATEWAY, format!("upstream: {e:#}"))
             }
             Err(panic) => {
                 let msg = panic_message(&panic);
-                tracing::error!("bilistream panic: {msg}");
+                tracing::error!("{} panic: {msg}", kind.label());
                 error_response(StatusCode::INTERNAL_SERVER_ERROR, format!("panic: {msg}"))
             }
         };
@@ -61,6 +102,7 @@ fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
 }
 
 async fn serve(
+    kind: Kind,
     bili: &Bili,
     request: &http::Request<Vec<u8>>,
 ) -> anyhow::Result<Response<Vec<u8>>> {
@@ -68,7 +110,7 @@ async fn serve(
     let uri = request.uri();
     let encoded = uri.path().trim_start_matches('/');
     if encoded.is_empty() {
-        anyhow::bail!("empty bilistream path");
+        anyhow::bail!("empty {} path", kind.label());
     }
     let real = String::from_utf8(URL_SAFE_NO_PAD.decode(encoded)?)?;
     let host = url_host(&real).unwrap_or("?");
@@ -79,8 +121,11 @@ async fn serve(
         .unwrap_or("-");
 
     let mut req = bili.client.get(&real);
-    if let Some(rng) = request.headers().get(header::RANGE) {
-        req = req.header(header::RANGE, rng.clone());
+    // Images are returned whole; only segments need byte-range passthrough.
+    if matches!(kind, Kind::Segment) {
+        if let Some(rng) = request.headers().get(header::RANGE) {
+            req = req.header(header::RANGE, rng.clone());
+        }
     }
 
     let upstream = req.send().await?;
@@ -106,6 +151,10 @@ async fn serve(
 
     let body = upstream.bytes().await?.to_vec();
     let t_total = t0.elapsed();
+    let tag = match kind {
+        Kind::Segment => "seg",
+        Kind::Image => "img",
+    };
     tracing::info!(
         host = host,
         range = range_str,
@@ -115,7 +164,8 @@ async fn serve(
         headers_ms = t_headers.as_millis() as u64,
         total_ms = t_total.as_millis() as u64,
         rate_mbps = mbps(body.len(), t_total),
-        "seg",
+        kind = tag,
+        "proxy",
     );
 
     Ok(builder.body(body)?)

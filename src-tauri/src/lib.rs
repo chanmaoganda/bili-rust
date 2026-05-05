@@ -28,11 +28,15 @@ pub fn run() {
     let bili = Arc::new(Bili::new(cookies).expect("init bili client"));
 
     let bili_for_scheme = bili.clone();
+    let bili_for_img = bili.clone();
 
     tauri::Builder::default()
         .manage(bili)
         .register_asynchronous_uri_scheme_protocol("bilistream", move |ctx, request, responder| {
             stream::handle(bili_for_scheme.clone(), ctx, request, responder);
+        })
+        .register_asynchronous_uri_scheme_protocol("biliimg", move |ctx, request, responder| {
+            stream::handle_image(bili_for_img.clone(), ctx, request, responder);
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_user_info,

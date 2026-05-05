@@ -50,9 +50,17 @@ main { padding: 20px; max-width: 1600px; margin: 0 auto; }
 .watch { display: grid; grid-template-columns: 1fr 360px; gap: 20px; }
 @media (max-width: 1100px) { .watch { grid-template-columns: 1fr; } }
 .watch video { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 6px; }
-.watch h1 { font-size: 18px; margin: 12px 0 8px; }
+.watch h1 { font-size: 18px; margin: 12px 0 8px; flex: 1; }
 .watch .up { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
 .watch .up img { width: 36px; height: 36px; border-radius: 50%; }
+
+.player-bar { display: flex; align-items: center; gap: 12px; }
+.quality {
+  background: var(--panel); color: var(--text);
+  border: 1px solid #2b303b; border-radius: 6px;
+  padding: 6px 10px; font-size: 13px; cursor: pointer;
+}
+.quality:hover { border-color: var(--accent); }
 
 .related { display: flex; flex-direction: column; gap: 10px; }
 .related .card { flex-direction: row; }

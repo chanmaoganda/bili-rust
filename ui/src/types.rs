@@ -33,6 +33,12 @@ pub struct PlayInfo {
     pub up_mid: i64,
     pub video: Vec<DashTrack>,
     pub audio: Vec<DashTrack>,
+    #[serde(default)]
+    pub accept_quality: Vec<u32>,
+    #[serde(default)]
+    pub accept_description: Vec<String>,
+    #[serde(default)]
+    pub current_quality: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

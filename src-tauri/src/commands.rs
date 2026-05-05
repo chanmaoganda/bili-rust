@@ -44,6 +44,9 @@ pub struct PlayInfo {
     pub up_mid: i64,
     pub video: Vec<DashTrack>,
     pub audio: Vec<DashTrack>,
+    pub accept_quality: Vec<u32>,
+    pub accept_description: Vec<String>,
+    pub current_quality: u32,
 }
 
 #[derive(Serialize)]
@@ -63,11 +66,12 @@ pub struct DashTrack {
 #[tauri::command]
 pub async fn get_user_info(state: BiliState<'_>) -> Result<UserInfo, String> {
     let nav = state.nav().await.map_err(err)?;
+    let face = proxy_image(&nav.data.face);
     Ok(UserInfo {
         is_login: nav.data.is_login,
         mid: nav.data.mid,
         uname: nav.data.uname,
-        face: nav.data.face,
+        face,
     })
 }
 
@@ -118,9 +122,29 @@ pub async fn get_play_info(
         .map(|arr| arr.iter().filter_map(track_from).collect())
         .unwrap_or_default();
 
+    let mut accept_quality: Vec<u32> = raw
+        .get("accept_quality")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as u32)).collect())
+        .unwrap_or_default();
+    let mut accept_description: Vec<String> = raw
+        .get("accept_description")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    // Bilibili occasionally returns mismatched arrays for unauthenticated users.
+    let n = accept_quality.len().min(accept_description.len());
+    accept_quality.truncate(n);
+    accept_description.truncate(n);
+    let current_quality = raw
+        .get("quality")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32)
+        .unwrap_or(qn);
+
     let view_fallback = view_meta.is_some();
     let (title, duration, up_name, up_face, up_mid) = if let Some(v) = view_meta {
-        (v.title, v.duration, v.owner.name, v.owner.face, v.owner.mid)
+        (v.title, v.duration, v.owner.name, proxy_image(&v.owner.face), v.owner.mid)
     } else {
         let dur = raw
             .pointer("/dash/duration")
@@ -151,7 +175,19 @@ pub async fn get_play_info(
         up_mid,
         video,
         audio,
+        accept_quality,
+        accept_description,
+        current_quality,
     })
+}
+
+/// Wrap an http(s) image URL in our biliimg:// scheme so requests carry the
+/// Referer/Cookie headers Bilibili's CDN requires. Empty / data: URLs pass through.
+fn proxy_image(url: &str) -> String {
+    if url.is_empty() || url.starts_with("data:") || url.starts_with("biliimg:") {
+        return url.to_string();
+    }
+    stream::rewrite_image(url)
 }
 
 fn track_from(t: &Value) -> Option<DashTrack> {
@@ -214,12 +250,14 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
     if goto != "av" {
         return None;
     }
+    let pic = item.get("pic").and_then(|v| v.as_str()).unwrap_or("");
+    let up_face = item.pointer("/owner/face").and_then(|v| v.as_str()).unwrap_or("");
     Some(VideoCard {
         bvid: item.get("bvid").and_then(|v| v.as_str())?.to_string(),
         aid: item.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
         cid: item.get("cid").and_then(|v| v.as_i64()).unwrap_or(0),
         title: item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        pic: item.get("pic").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        pic: proxy_image(pic),
         duration: item.get("duration").and_then(|v| v.as_i64()).unwrap_or(0),
         view: item
             .get("stat")
@@ -231,22 +269,20 @@ fn card_from_rcmd_item(item: &Value) -> Option<VideoCard> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        up_face: item
-            .pointer("/owner/face")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+        up_face: proxy_image(up_face),
         up_mid: item.pointer("/owner/mid").and_then(|v| v.as_i64()).unwrap_or(0),
     })
 }
 
 fn card_from_related_item(item: &Value) -> Option<VideoCard> {
+    let pic = item.get("pic").and_then(|v| v.as_str()).unwrap_or("");
+    let up_face = item.pointer("/owner/face").and_then(|v| v.as_str()).unwrap_or("");
     Some(VideoCard {
         bvid: item.get("bvid").and_then(|v| v.as_str())?.to_string(),
         aid: item.get("aid").and_then(|v| v.as_i64()).unwrap_or(0),
         cid: item.get("cid").and_then(|v| v.as_i64()).unwrap_or(0),
         title: item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        pic: item.get("pic").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        pic: proxy_image(pic),
         duration: item.get("duration").and_then(|v| v.as_i64()).unwrap_or(0),
         view: item
             .get("stat")
@@ -258,11 +294,7 @@ fn card_from_related_item(item: &Value) -> Option<VideoCard> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        up_face: item
-            .pointer("/owner/face")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+        up_face: proxy_image(up_face),
         up_mid: item.pointer("/owner/mid").and_then(|v| v.as_i64()).unwrap_or(0),
     })
 }

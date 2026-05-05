@@ -9,6 +9,7 @@ pub fn Home() -> impl IntoView {
     let fresh_idx = RwSignal::new(0u32);
     let loading = RwSignal::new(false);
     let error = RwSignal::new(None::<String>);
+    let attempted = RwSignal::new(false);
 
     let load_more = move || {
         if loading.get() {
@@ -25,15 +26,17 @@ pub fn Home() -> impl IntoView {
                 }
                 Err(e) => error.set(Some(e)),
             }
+            attempted.set(true);
             loading.set(false);
         });
     };
 
-    // initial load
+    // initial load — fire once. Without the attempted guard this re-fires
+    // forever when the API returns zero items.
     Effect::new({
         let load_more = load_more.clone();
         move |_| {
-            if cards.with(|c| c.is_empty()) && !loading.get() {
+            if !attempted.get() && !loading.get() {
                 load_more();
             }
         }
@@ -49,6 +52,8 @@ pub fn Home() -> impl IntoView {
                 />
             </div>
             {move || error.get().map(|e| view! { <div class="error">{e}</div> })}
+            {move || (attempted.get() && cards.with(|c| c.is_empty()) && error.with(|e| e.is_none()))
+                .then(|| view! { <div class="empty">"No videos returned."</div> })}
             <button
                 class="load-more"
                 on:click=move |_| load_more()
