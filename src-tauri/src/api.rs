@@ -137,6 +137,29 @@ impl Bili {
         v.data.ok_or_else(|| anyhow!("view: no data"))
     }
 
+    /// /x/v2/reply — top-level comments for a video (type=1, oid=aid).
+    /// Pagination endpoint; `pn` is 1-based, `ps` ≤ 20.
+    pub async fn comments(&self, aid: i64, pn: u32, ps: u32, sort: u32) -> Result<Value> {
+        let v: ApiEnvelope<Value> = self
+            .client
+            .get("https://api.bilibili.com/x/v2/reply")
+            .query(&[
+                ("type", "1".to_string()),
+                ("oid", aid.to_string()),
+                ("pn", pn.to_string()),
+                ("ps", ps.to_string()),
+                ("sort", sort.to_string()),
+            ])
+            .send()
+            .await?
+            .json()
+            .await?;
+        if v.code != 0 {
+            return Err(anyhow!("comments failed: code={} msg={}", v.code, v.message));
+        }
+        v.data.ok_or_else(|| anyhow!("comments: no data"))
+    }
+
     /// /x/v1/dm/list.so — danmaku XML for a given cid (deflate-compressed)
     pub async fn danmaku(&self, cid: i64) -> Result<Vec<crate::danmaku::Danmaku>> {
         let t0 = Instant::now();

@@ -92,6 +92,31 @@ main { padding: 20px; max-width: 1600px; margin: 0 auto; }
 .error button:hover { border-color: var(--accent); color: var(--accent); }
 .scroll-sentinel { height: 1px; }
 
+.comments { margin-top: 24px; }
+.comments h2 { font-size: 15px; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+.comments .load-more { width: auto; margin: 16px 0 0; }
+.comment-item {
+  display: flex; gap: 10px; padding: 12px 0;
+  border-bottom: 1px solid #222732;
+}
+.comment-item img.avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  flex-shrink: 0; background: var(--panel);
+}
+.comment-body { flex: 1; min-width: 0; }
+.comment-name { color: var(--accent); font-size: 13px; font-weight: 600; }
+.comment-message {
+  font-size: 14px; line-height: 1.5; margin: 4px 0 6px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.comment-meta { color: var(--muted); font-size: 12px; display: flex; gap: 12px; }
+.comment-replies {
+  margin-top: 8px; padding-left: 12px;
+  border-left: 2px solid #2b303b;
+}
+.comment-replies .comment-item { padding: 8px 0; border-bottom: none; }
+.comment-replies .comment-item img.avatar { width: 28px; height: 28px; }
+
 .feed-toolbar { display: flex; justify-content: flex-end; margin: 0 0 14px; }
 .refresh {
   background: var(--panel); color: var(--text);

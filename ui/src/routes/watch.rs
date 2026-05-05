@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::comments::Comments;
 use crate::components::danmaku::DanmakuOverlay;
 use crate::components::player::Player;
 use crate::components::video_card::VideoCardView;
@@ -163,6 +164,7 @@ pub fn Watch() -> impl IntoView {
                         Err(e) => view! { <div class="error">{e}</div> }.into_any(),
                     }
                 }}
+                <Comments bvid=bvid />
             </div>
             <aside class="related">
                 {move || match related.get() {

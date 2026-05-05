@@ -51,6 +51,35 @@ pub struct PlayInfo {
 }
 
 #[derive(Serialize)]
+pub struct CommentMember {
+    pub mid: i64,
+    pub uname: String,
+    pub face: String,
+}
+
+#[derive(Serialize)]
+pub struct Comment {
+    pub rpid: i64,
+    pub mid: i64,
+    pub ctime: i64,
+    pub like: i64,
+    pub rcount: i64,
+    pub message: String,
+    pub member: CommentMember,
+    pub replies: Vec<Comment>,
+    pub location: String,
+}
+
+#[derive(Serialize)]
+pub struct CommentPage {
+    pub page: u32,
+    pub size: u32,
+    pub count: i64,
+    pub acount: i64,
+    pub replies: Vec<Comment>,
+}
+
+#[derive(Serialize)]
 pub struct DashTrack {
     pub id: i64,
     pub mime: String,
@@ -185,6 +214,89 @@ pub async fn get_play_info(
 #[tauri::command]
 pub async fn get_danmaku(state: BiliState<'_>, cid: i64) -> Result<Vec<Danmaku>, String> {
     state.danmaku(cid).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn get_comments(
+    state: BiliState<'_>,
+    bvid: String,
+    pn: u32,
+    sort: u32,
+) -> Result<CommentPage, String> {
+    let view = state.view(&bvid).await.map_err(err)?;
+    let raw = state.comments(view.aid, pn, 20, sort).await.map_err(err)?;
+
+    let page = raw.pointer("/page/num").and_then(|v| v.as_u64()).unwrap_or(pn as u64) as u32;
+    let size = raw.pointer("/page/size").and_then(|v| v.as_u64()).unwrap_or(20) as u32;
+    let count = raw.pointer("/page/count").and_then(|v| v.as_i64()).unwrap_or(0);
+    let acount = raw.pointer("/page/acount").and_then(|v| v.as_i64()).unwrap_or(count);
+
+    let replies: Vec<Comment> = raw
+        .get("replies")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| comment_from(v, 0)).collect())
+        .unwrap_or_default();
+
+    Ok(CommentPage { page, size, count, acount, replies })
+}
+
+/// Map a JSON reply node to our typed Comment. `depth` guards inline-replies
+/// recursion: top-level is 0, nested replies are 1, anything deeper is dropped
+/// (Bilibili only inlines two levels anyway).
+fn comment_from(item: &Value, depth: u8) -> Option<Comment> {
+    let rpid = item.get("rpid").and_then(|v| v.as_i64())?;
+    let mid = item.get("mid").and_then(|v| v.as_i64()).unwrap_or(0);
+    let ctime = item.get("ctime").and_then(|v| v.as_i64()).unwrap_or(0);
+    let like = item.get("like").and_then(|v| v.as_i64()).unwrap_or(0);
+    let rcount = item.get("rcount").and_then(|v| v.as_i64()).unwrap_or(0);
+    let message = item
+        .pointer("/content/message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let member = CommentMember {
+        // member.mid arrives as a string in this API; fall back to the top-level mid.
+        mid: item
+            .pointer("/member/mid")
+            .and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_i64()))
+            .unwrap_or(mid),
+        uname: item
+            .pointer("/member/uname")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        face: proxy_image(
+            item.pointer("/member/avatar")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+        ),
+    };
+    let location = item
+        .pointer("/reply_control/location")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let replies = if depth == 0 {
+        item.get("replies")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| comment_from(v, depth + 1)).collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    Some(Comment {
+        rpid,
+        mid,
+        ctime,
+        like,
+        rcount,
+        message,
+        member,
+        replies,
+        location,
+    })
 }
 
 /// Wrap an http(s) image URL in our biliimg:// scheme so requests carry the

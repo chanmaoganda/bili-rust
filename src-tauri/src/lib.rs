@@ -45,6 +45,7 @@ pub fn run() {
             commands::get_related,
             commands::get_play_info,
             commands::get_danmaku,
+            commands::get_comments,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

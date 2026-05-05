@@ -64,6 +64,61 @@ pub struct Danmaku {
     pub text: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct CommentMember {
+    pub mid: i64,
+    pub uname: String,
+    pub face: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Comment {
+    pub rpid: i64,
+    pub mid: i64,
+    pub ctime: i64,
+    pub like: i64,
+    pub rcount: i64,
+    pub message: String,
+    pub member: CommentMember,
+    #[serde(default)]
+    pub replies: Vec<Comment>,
+    #[serde(default)]
+    pub location: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct CommentPage {
+    pub page: u32,
+    pub size: u32,
+    pub count: i64,
+    pub acount: i64,
+    pub replies: Vec<Comment>,
+}
+
+/// Format a Unix-seconds timestamp as a relative Chinese label.
+pub fn fmt_ctime(ctime: i64) -> String {
+    if ctime <= 0 {
+        return String::new();
+    }
+    let now = (js_sys::Date::now() / 1000.0) as i64;
+    let diff = now - ctime;
+    if diff < 60 {
+        "刚刚".to_string()
+    } else if diff < 3600 {
+        format!("{}分钟前", diff / 60)
+    } else if diff < 86_400 {
+        format!("{}小时前", diff / 3600)
+    } else if diff < 86_400 * 30 {
+        format!("{}天前", diff / 86_400)
+    } else {
+        let d = js_sys::Date::new(&((ctime as f64) * 1000.0).into());
+        let y = d.get_full_year();
+        let m = d.get_month() + 1;
+        let day = d.get_date();
+        format!("{y}-{m:02}-{day:02}")
+    }
+}
+
 pub fn fmt_views(n: i64) -> String {
     if n >= 10_000 {
         format!("{:.1}万", n as f64 / 10_000.0)

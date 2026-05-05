@@ -48,6 +48,13 @@ struct CidArgs {
     cid: i64,
 }
 
+#[derive(Serialize)]
+struct CommentArgs<'a> {
+    bvid: &'a str,
+    pn: u32,
+    sort: u32,
+}
+
 pub async fn get_user_info() -> Result<UserInfo, String> {
     invoke("get_user_info", NoArgs {}).await
 }
@@ -74,4 +81,8 @@ pub async fn get_play_info(
 
 pub async fn get_danmaku(cid: i64) -> Result<Vec<Danmaku>, String> {
     invoke("get_danmaku", CidArgs { cid }).await
+}
+
+pub async fn get_comments(bvid: &str, pn: u32, sort: u32) -> Result<CommentPage, String> {
+    invoke("get_comments", CommentArgs { bvid, pn, sort }).await
 }
