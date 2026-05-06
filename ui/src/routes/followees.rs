@@ -257,10 +257,12 @@ pub fn Followees() -> impl IntoView {
             }
             // Update total by the number of *actual* successes.
             total.update(|t| *t = (*t - successes).max(0));
-            // Selection: keep failed mids selected, drop successes.
+            // Selection: drop successes from this batch, leave everything else
+            // (including unrelated selections from before a row-level unfollow)
+            // alone. Failed mids stay selected so the user can retry them.
             let failed_mids: HashSet<i64> = failures.iter().map(|(_, it)| it.mid).collect();
             selected.update(|s| {
-                s.retain(|m| failed_mids.contains(m));
+                s.retain(|m| !target_set.contains(m) || failed_mids.contains(m));
             });
             pending.update(|p| {
                 for m in target_set.iter() {
