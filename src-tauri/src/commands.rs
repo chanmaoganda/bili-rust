@@ -917,10 +917,18 @@ pub async fn get_decoder_probe() -> Result<DecoderProbe, String> {
 pub fn log_player_event(label: String, detail: String) {
     // Trim huge payloads (e.g. fragment objects with full request copies) so
     // the log file stays readable. We slice on a char boundary, so the cap is
-    // approximate — that's fine for a diagnostic log.
-    const MAX: usize = 1024;
-    let detail_trimmed = if detail.len() > MAX {
-        let mut end = MAX;
+    // approximate — that's fine for a diagnostic log. Diagnostic-relevant
+    // labels get a larger budget so MEDIA_ERR_DECODE bursts can be matched
+    // against the codec ladder of the manifest that loaded just before.
+    const MAX_DEFAULT: usize = 1024;
+    const MAX_DIAGNOSTIC: usize = 16 * 1024;
+    let max = match label.as_str() {
+        "MANIFEST_LOADED" | "STREAM_INITIALIZED" | "VIDEO_ERROR" | "ERROR"
+        | "PLAYBACK_ERROR" | "INIT_FAIL" => MAX_DIAGNOSTIC,
+        _ => MAX_DEFAULT,
+    };
+    let detail_trimmed = if detail.len() > max {
+        let mut end = max;
         while !detail.is_char_boundary(end) && end > 0 {
             end -= 1;
         }
@@ -934,6 +942,11 @@ pub fn log_player_event(label: String, detail: String) {
     };
     if label.contains("ERROR") || label.contains("FAIL") {
         tracing::warn!(label = %label, detail = %detail_trimmed, "player event");
+    } else if label.starts_with("FRAG_") {
+        // Per-fragment success events fire once per segment (~5s of video).
+        // They flood the log and rarely matter unless we're actively debugging
+        // ABR / network issues — gate them behind RUST_LOG=...=debug.
+        tracing::debug!(label = %label, detail = %detail_trimmed, "player event");
     } else {
         tracing::info!(label = %label, detail = %detail_trimmed, "player event");
     }

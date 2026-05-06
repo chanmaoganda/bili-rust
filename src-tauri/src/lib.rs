@@ -111,8 +111,23 @@ pub fn run() {
 // packaged Windows GUI build leaves behind, since there's no console).
 // Returns the non-blocking writer's guard, which must outlive the app.
 fn init_tracing(app: &tauri::AppHandle) -> Option<WorkerGuard> {
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "info,bili_rust_lib=debug".into());
+    // Filter precedence: `BILI_LOG` (app-specific) > `RUST_LOG` > built-in
+    // default. Default is plain `info` — per-segment proxy logs and dash.js
+    // fragment events are emitted at DEBUG and would otherwise dominate the
+    // file. Bump with e.g. `BILI_LOG=bili_rust_lib=debug` (or `trace` for WBI
+    // signing) to get them back when diagnosing.
+    const DEFAULT_FILTER: &str = "info";
+    if std::env::var_os("BILI_LOG").is_none() && std::env::var_os("RUST_LOG").is_none() {
+        // Ship the effective default as an actual env var so it shows up in
+        // `/proc/<pid>/environ`, is inherited by any child the app spawns, and
+        // is discoverable for users who want to know what to override.
+        std::env::set_var("BILI_LOG", DEFAULT_FILTER);
+    }
+    let env_filter = std::env::var("BILI_LOG")
+        .ok()
+        .and_then(|s| tracing_subscriber::EnvFilter::try_new(s).ok())
+        .or_else(|| tracing_subscriber::EnvFilter::try_from_default_env().ok())
+        .unwrap_or_else(|| tracing_subscriber::EnvFilter::new(DEFAULT_FILTER));
     let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
 
     let log_dir = app.path().app_log_dir().ok();

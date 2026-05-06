@@ -209,7 +209,10 @@ async fn serve(
         Kind::Segment => "seg",
         Kind::Image => "img",
     };
-    tracing::info!(
+    // One line per segment / thumbnail — overwhelmingly dominates the log file.
+    // Keep at DEBUG so it's available with `RUST_LOG=bili_rust_lib=debug` but
+    // doesn't bloat the default release log.
+    tracing::debug!(
         host = host,
         range = range_str,
         status = status.as_u16(),

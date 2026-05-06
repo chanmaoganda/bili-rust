@@ -273,6 +273,26 @@ fn serde_escape(s: &str) -> String {
     out
 }
 
+// Serialize a `manifestLoaded` event but skip the per-Representation BaseURL
+// payloads and segment-template subtrees. Each BaseURL is a long base64 of a
+// `bilistream://seg/...` URL, and dash.js inlines one per representation —
+// they dominate the payload size while telling us nothing the
+// `bili_rust_lib::stream` proxy log doesn't already cover.
+fn stringify_manifest(event: &JsValue) -> String {
+    let replacer = Function::new_with_args(
+        "key, value",
+        "if (key === 'BaseURL' || key === 'BaseURL_asArray' \
+            || key === 'SegmentBase' || key === 'SegmentList' \
+            || key === 'SegmentTemplate' || key === 'url' || key === '__text') \
+            return undefined; \
+         return value;",
+    );
+    JSON::stringify_with_replacer(event, &replacer)
+        .ok()
+        .and_then(|s| s.as_string())
+        .unwrap_or_else(|| "\"<unstringifiable>\"".to_string())
+}
+
 fn wire_event(player: &JsValue, event: &str, label: &'static str) -> Result<(), JsValue> {
     let on: Function = Reflect::get(player, &"on".into())?.dyn_into()?;
     let cb = Closure::<dyn Fn(JsValue)>::new(move |e: JsValue| {
@@ -281,11 +301,17 @@ fn wire_event(player: &JsValue, event: &str, label: &'static str) -> Result<(), 
         // Windows builds (no devtools console) still leave a trace of what
         // happened during playback. JSON.stringify swallows unsupported types
         // (functions, cyclic refs); fall back to a placeholder so we still
-        // record the event name itself.
-        let detail = JSON::stringify(&e)
-            .ok()
-            .and_then(|s| s.as_string())
-            .unwrap_or_else(|| "\"<unstringifiable>\"".to_string());
+        // record the event name itself. For MANIFEST_LOADED, drop the bulky
+        // BaseURL/Segment fields so the codec ladder (id/codecs/bandwidth/
+        // width/height) survives the backend's per-event size cap.
+        let detail = if label == "MANIFEST_LOADED" {
+            stringify_manifest(&e)
+        } else {
+            JSON::stringify(&e)
+                .ok()
+                .and_then(|s| s.as_string())
+                .unwrap_or_else(|| "\"<unstringifiable>\"".to_string())
+        };
         let label_owned = label.to_string();
         spawn_local(async move {
             let _ = api::log_player_event(&label_owned, &detail).await;
