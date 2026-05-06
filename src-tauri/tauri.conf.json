@@ -27,6 +27,42 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.png"]
+    "icon": ["icons/icon.png"],
+    "category": "Video",
+    "shortDescription": "Bilibili desktop client built with Tauri + Leptos",
+    "longDescription": "A native desktop client for Bilibili written in Rust using Tauri 2 and a Leptos WASM frontend. Plays DASH streams, renders danmaku, and supports like/coin/favorite/follow actions and QR-code login.",
+    "homepage": "https://github.com/chanmaoganda/bili-rust",
+    "publisher": "bili-rust",
+    "copyright": "Copyright (c) 2026 Ethan Wang",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1"
+        ],
+        "section": "video",
+        "priority": "optional"
+      },
+      "rpm": {
+        "depends": ["webkit2gtk4.1", "gtk3", "libayatana-appindicator-gtk3"],
+        "release": "1",
+        "epoch": 0
+      },
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    },
+    "windows": {
+      "wix": {
+        "language": ["en-US", "zh-CN"]
+      },
+      "nsis": {
+        "languages": ["English", "SimpChinese"],
+        "displayLanguageSelector": true
+      }
+    }
   }
 }

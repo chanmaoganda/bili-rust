@@ -3,3 +3,4 @@ cookies.json
 target/
 ui/dist/
 /dist/
+.claude/

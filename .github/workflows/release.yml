@@ -1,0 +1,91 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: linux-x86_64
+            bundles: deb,appimage,rpm
+          - os: windows-latest
+            label: windows-x86_64
+            bundles: msi,nsis
+          - os: macos-latest
+            label: macos-aarch64
+            bundles: app,dmg
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf \
+            rpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Install Trunk
+        uses: jetli/trunk-action@v0.5.0
+        with:
+          version: "latest"
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli@^2 --locked
+
+      - name: Build bundles
+        run: cargo tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          # Tauri drops bundles under target/release/bundle/<format>/.
+          # Copy everything regardless of platform; -f -r covers macOS .app dirs.
+          shopt -s globstar nullglob
+          for f in target/release/bundle/**/*.{deb,rpm,AppImage,msi,exe,dmg}; do
+            [ -e "$f" ] && cp -f "$f" dist/
+          done
+          # macOS .app is a directory — tarball it.
+          for app in target/release/bundle/macos/*.app; do
+            [ -e "$app" ] && tar -C "$(dirname "$app")" -czf "dist/$(basename "$app").tar.gz" "$(basename "$app")"
+          done
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bili-rust-${{ matrix.label }}
+          path: dist/*
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
