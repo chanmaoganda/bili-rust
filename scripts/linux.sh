@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build Linux installers (deb/appimage/rpm) and a no-bundle binary tarball,
+# Build Linux installers (deb/rpm) and a no-bundle binary tarball,
 # then collect everything under dist/ for shipping.
 #
-#   ./scripts/linux.sh                # default: deb appimage rpm + tarball
-#   ./scripts/linux.sh deb appimage   # explicit subset (tarball still produced)
+#   ./scripts/linux.sh         # default: deb rpm + tarball
+#   ./scripts/linux.sh deb     # explicit subset (tarball still produced)
 #
-# Output: dist/*.{deb,rpm,AppImage,tar.gz}
+# Output: dist/*.{deb,rpm,tar.gz}
 # Cross-platform bundling lives in .github/workflows/release.yml.
 
 set -euo pipefail
@@ -36,7 +36,7 @@ declare -a REQUESTED=()
 if [[ $# -gt 0 ]]; then
     REQUESTED=("$@")
 else
-    REQUESTED=(deb appimage rpm)
+    REQUESTED=(deb rpm)
 fi
 
 declare -a SELECTED=()
@@ -50,11 +50,8 @@ for fmt in "${REQUESTED[@]}"; do
             if command -v rpmbuild >/dev/null; then SELECTED+=("$fmt"); else
                 echo "skip rpm — rpmbuild not on PATH (Arch: pacman -S rpm-tools; Debian: apt install rpm)" >&2
             fi ;;
-        appimage)
-            # tauri-bundler downloads appimagetool itself if absent.
-            SELECTED+=("$fmt") ;;
         *)
-            echo "ERROR: unsupported bundle format '$fmt' (linux.sh accepts: deb appimage rpm)" >&2
+            echo "ERROR: unsupported bundle format '$fmt' (linux.sh accepts: deb rpm)" >&2
             exit 2 ;;
     esac
 done
@@ -67,23 +64,6 @@ fi
 JOINED="$(IFS=,; echo "${SELECTED[*]}")"
 
 # ── Build ────────────────────────────────────────────────────────────
-# linuxdeploy bundles an old binutils whose `strip` doesn't understand
-# `.relr.dyn` (DT_RELR), which modern glibc + binutils now emit on every
-# shared lib. Every strip call fails with "unknown type [0x13]" and
-# linuxdeploy exits non-zero. NO_STRIP skips that pass entirely; the AppImage
-# is slightly larger but functionally identical.
-export NO_STRIP=true
-
-# linuxdeploy-plugin-gtk.sh runs `find "$gobject_libdir"` (== /usr/lib) without
-# -maxdepth, so it descends into bundled-app dirs like /usr/lib/openshot/ and
-# tries to deploy stale GTK copies that pull in obsolete deps (libffi.so.7).
-# Confine the search to the top level. Idempotent — only patches if needed.
-GTK_PLUGIN="${HOME}/.cache/tauri/linuxdeploy-plugin-gtk.sh"
-if [[ -f "$GTK_PLUGIN" ]] && ! grep -q 'find "$directory" -maxdepth 1' "$GTK_PLUGIN"; then
-    echo "==> patching $GTK_PLUGIN to avoid /usr/lib subdir traversal"
-    sed -i 's|find "$directory" \\[(]|find "$directory" -maxdepth 1 \\(|g' "$GTK_PLUGIN"
-fi
-
 echo "==> cargo tauri build --bundles ${JOINED}"
 cargo tauri build --bundles "$JOINED"
 
@@ -97,9 +77,12 @@ TARBALL="${STAGE}.tar.gz"
 
 mkdir -p dist
 
-# Copy installers — workspace target dir is target/, not src-tauri/target/.
+# Copy installers, filtered by current version so prior-version artifacts
+# left behind by tauri-bundler don't ride along into dist/.
+# Naming: deb uses _<ver>_, rpm uses -<ver>-.
 shopt -s globstar nullglob
-for f in target/release/bundle/**/*.deb target/release/bundle/**/*.rpm target/release/bundle/**/*.AppImage; do
+for f in target/release/bundle/**/*"_${VERSION}_"*.deb \
+         target/release/bundle/**/*"-${VERSION}-"*.rpm; do
     [[ -e "$f" ]] && cp -f "$f" dist/
 done
 shopt -u globstar nullglob

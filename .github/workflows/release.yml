@@ -17,7 +17,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             label: linux-x86_64
-            bundles: deb,appimage,rpm
+            bundles: deb,rpm
           - os: windows-latest
             label: windows-x86_64
             bundles: msi,nsis
@@ -70,7 +70,7 @@ jobs:
           mkdir -p dist
           bundle_root="target/release/bundle"
           find "$bundle_root" -type f \
-            \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
+            \( -name '*.deb' -o -name '*.rpm' \
                -o -name '*.msi' -o -name '*.exe' -o -name '*.dmg' \) \
             -exec cp -f {} dist/ \;
           if [ -d "$bundle_root/macos" ]; then

@@ -17,7 +17,7 @@ pub fn Header() -> impl IntoView {
     view! {
         <header class="app">
             <A href="/">
-                <span class="brand">"Bili (Rust)"</span>
+                <span class="brand">"bili-rust"</span>
             </A>
             <nav class="top-nav">
                 <A href="/history"><span class="nav-link">"历史"</span></A>

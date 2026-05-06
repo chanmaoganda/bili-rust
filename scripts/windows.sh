@@ -57,12 +57,23 @@ echo "==> cargo tauri build --target ${TARGET} --bundles nsis"
 cargo tauri build --target "$TARGET" --bundles nsis
 
 # ── Stage output into dist/ ──────────────────────────────────────────
+# Tauri's NSIS bundler does not delete stale-version installers from the
+# bundle dir, so filter the copy by the current Cargo.toml version to
+# avoid shipping yesterday's 0.1.0 alongside today's 0.2.0.
+VERSION="$(grep -m1 '^version *= *' src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+
 mkdir -p dist
 shopt -s nullglob
-for f in "target/${TARGET}/release/bundle/nsis"/*.exe; do
+matched=0
+for f in "target/${TARGET}/release/bundle/nsis/"*"_${VERSION}_"*.exe; do
     cp -f "$f" dist/
+    matched=1
 done
 shopt -u nullglob
+if (( matched == 0 )); then
+    echo "ERROR: no NSIS installer for version ${VERSION} in target/${TARGET}/release/bundle/nsis/" >&2
+    exit 1
+fi
 
 # ── Manifest ─────────────────────────────────────────────────────────
 echo

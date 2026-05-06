@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Bili (Rust)",
+  "productName": "bili-rust",
   "version": "0.2.0",
   "identifier": "dev.local.bili-rust",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Bili (Rust)",
+        "title": "bili-rust",
         "width": 1280,
         "height": 800,
         "resizable": true,
@@ -56,9 +56,6 @@
         "depends": ["webkit2gtk4.1", "gtk3", "libayatana-appindicator-gtk3"],
         "release": "1",
         "epoch": 0
-      },
-      "appimage": {
-        "bundleMediaFramework": true
       }
     },
     "windows": {
