@@ -21,10 +21,7 @@ struct Sample {
 /// probe of GStreamer hardware decoder factories. Helps the user judge whether
 /// the webview is actually hardware-decoding.
 #[component]
-pub fn StatsHud(
-    video: RwSignal<Option<HtmlVideoElement>>,
-    info: PlayInfo,
-) -> impl IntoView {
+pub fn StatsHud(video: RwSignal<Option<HtmlVideoElement>>, info: PlayInfo) -> impl IntoView {
     let probe = RwSignal::new(None::<Result<DecoderProbe, String>>);
     let sample = RwSignal::new(Sample::default());
 
@@ -129,6 +126,16 @@ pub fn StatsHud(
                 <b>"HW decoders: "</b>
                 {move || match probe.get() {
                     None => "probing…".to_string(),
+                    // Non-Linux: gst-inspect doesn't apply. Show the webview's
+                    // own pipeline; the per-frame drop heuristic below judges
+                    // whether HW decode is actually engaged.
+                    Some(Ok(p)) if p.platform != "linux" => {
+                        if p.pipeline.is_empty() {
+                            format!("{} (no host probe)", p.platform)
+                        } else {
+                            p.pipeline.clone()
+                        }
+                    }
                     Some(Ok(p)) if p.gst_inspect_ok => {
                         if p.hw_decoders.is_empty() {
                             "none".to_string()
@@ -148,22 +155,34 @@ pub fn StatsHud(
                 {move || {
                     let s = sample.get();
                     let codec = codec.clone();
+                    let frame_rate = selected_track
+                        .as_ref()
+                        .and_then(|t| t.frame_rate.parse::<f64>().ok())
+                        .unwrap_or(30.0);
+                    let drop_ratio = if frame_rate > 0.0 {
+                        s.last_dropped_per_s as f64 / frame_rate
+                    } else {
+                        0.0
+                    };
+                    let low_drops = drop_ratio < 0.05;
                     match probe.get() {
                         None => "(measuring…)".to_string(),
+                        // Off-Linux fall back to a drop-rate-only heuristic.
+                        // WebView2 / WKWebView default to HW accel for H.264 /
+                        // HEVC; sustained drops are the only signal we have
+                        // that decode has fallen back to software.
+                        Some(Ok(p)) if p.platform != "linux" => {
+                            if s.decoded == 0 {
+                                "(awaiting frames…)".to_string()
+                            } else if low_drops {
+                                format!("hardware likely ({})", p.pipeline)
+                            } else {
+                                "dropping frames — likely software fallback".to_string()
+                            }
+                        }
                         Some(Ok(p)) if p.gst_inspect_ok => {
                             let matches_codec = match_codec_to_decoder(&codec, &p.hw_decoders);
-                            // Bilibili streams typically run 24–60 fps. >5% drops/s on a
-                            // 1s window strongly suggests software fallback or stutter.
-                            let frame_rate = selected_track
-                                .as_ref()
-                                .and_then(|t| t.frame_rate.parse::<f64>().ok())
-                                .unwrap_or(30.0);
-                            let drop_ratio = if frame_rate > 0.0 {
-                                s.last_dropped_per_s as f64 / frame_rate
-                            } else {
-                                0.0
-                            };
-                            match (matches_codec, drop_ratio < 0.05) {
+                            match (matches_codec, low_drops) {
                                 (true, true) => "hardware (no drops)".to_string(),
                                 (true, false) => "matching HW decoder available, but dropping frames — check pipeline".to_string(),
                                 (false, _) => "software (no matching HW decoder for codec)".to_string(),
@@ -176,15 +195,14 @@ pub fn StatsHud(
             <div style="opacity:0.7;margin-top:4px">
                 {move || {
                     let p = probe.get();
-                    let env_line = |p: &DecoderProbe| {
-                        format!(
+                    // The VAAPI env vars only mean anything to GStreamer, so
+                    // hide them off-Linux to keep the HUD signal-dense.
+                    match p {
+                        Some(Ok(p)) if p.platform == "linux" => format!(
                             "LIBVA_DRIVER_NAME={} GST_VAAPI_ALL_DRIVERS={}",
                             p.libva_driver.as_deref().unwrap_or("(unset)"),
                             p.gst_vaapi_all_drivers.as_deref().unwrap_or("(unset)"),
-                        )
-                    };
-                    match p {
-                        Some(Ok(p)) => env_line(&p),
+                        ),
                         _ => String::new(),
                     }
                 }}

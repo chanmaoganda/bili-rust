@@ -5,16 +5,27 @@ use http::{header, Response, StatusCode};
 use std::sync::Arc;
 use tauri::{UriSchemeContext, UriSchemeResponder, Wry};
 
+// Windows / WebView2 does not allow registering arbitrary URI schemes, so
+// Tauri 2 reroutes them through `http://<scheme>.localhost/...`. Other
+// platforms accept the native `<scheme>://...` form. Both shapes resolve to
+// the same handler and the same `path()` payload, so the rest of the proxy
+// is unaware of the platform split.
 pub fn rewrite(url: &str) -> String {
-    // bilistream://seg/<b64> — "seg" is the URI authority (acts as a host).
-    // The handler reads the path, which is "/<b64>".
     let b = URL_SAFE_NO_PAD.encode(url.as_bytes());
-    format!("bilistream://seg/{b}")
+    if cfg!(windows) {
+        format!("http://bilistream.localhost/seg/{b}")
+    } else {
+        format!("bilistream://seg/{b}")
+    }
 }
 
 pub fn rewrite_image(url: &str) -> String {
     let b = URL_SAFE_NO_PAD.encode(url.as_bytes());
-    format!("biliimg://img/{b}")
+    if cfg!(windows) {
+        format!("http://biliimg.localhost/img/{b}")
+    } else {
+        format!("biliimg://img/{b}")
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -62,6 +73,27 @@ fn dispatch(
     request: http::Request<Vec<u8>>,
     responder: UriSchemeResponder,
 ) {
+    // Windows / WebView2 maps the scheme to `http://<scheme>.localhost`, which
+    // makes proxy requests cross-origin. dash.js sends `Range` (a non-CORS-
+    // safelisted header) and reads `Content-Range` from the response, both of
+    // which need explicit allow-list entries. Without them the GET succeeds at
+    // the network layer but the browser hides the body / partial-content
+    // metadata from JS, so MSE never sees segment data and frame decode stays
+    // pinned at zero. Reply directly to the OPTIONS preflight here.
+    if request.method() == http::Method::OPTIONS {
+        let req_headers = request
+            .headers()
+            .get("access-control-request-headers")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("-");
+        tracing::debug!(
+            kind = kind.label(),
+            req_headers = req_headers,
+            "preflight"
+        );
+        responder.respond(preflight_response());
+        return;
+    }
     tauri::async_runtime::spawn(async move {
         let result = std::panic::AssertUnwindSafe(serve(kind, &bili, &request))
             .catch_unwind()
@@ -87,8 +119,20 @@ fn error_response(status: StatusCode, body: String) -> Response<Vec<u8>> {
     Response::builder()
         .status(status.as_u16())
         .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .header("access-control-allow-origin", "*")
         .body(body.into_bytes())
         .expect("static error response is always valid")
+}
+
+fn preflight_response() -> Response<Vec<u8>> {
+    Response::builder()
+        .status(204)
+        .header("access-control-allow-origin", "*")
+        .header("access-control-allow-methods", "GET, HEAD, OPTIONS")
+        .header("access-control-allow-headers", "Range")
+        .header("access-control-max-age", "86400")
+        .body(Vec::new())
+        .expect("static preflight response is always valid")
 }
 
 fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
@@ -108,7 +152,12 @@ async fn serve(
 ) -> anyhow::Result<Response<Vec<u8>>> {
     let t0 = std::time::Instant::now();
     let uri = request.uri();
-    let encoded = uri.path().trim_start_matches('/');
+    // Take the last path segment. On Linux/macOS the URL is
+    // `biliimg://img/<b64>` where "img" is the authority and `path()` returns
+    // `/<b64>`; on Windows it's `http://biliimg.localhost/img/<b64>` and
+    // `path()` returns `/img/<b64>`. Splitting on '/' from the right gives
+    // `<b64>` either way (the URL-safe base64 alphabet has no '/').
+    let encoded = uri.path().rsplit('/').next().unwrap_or("");
     if encoded.is_empty() {
         anyhow::bail!("empty {} path", kind.label());
     }
@@ -147,7 +196,16 @@ async fn serve(
             builder = builder.header(h, v.clone());
         }
     }
-    builder = builder.header("access-control-allow-origin", "*");
+    builder = builder
+        .header("access-control-allow-origin", "*")
+        .header("access-control-allow-headers", "Range")
+        // Without exposing Content-Range / Content-Length / Accept-Ranges,
+        // dash.js cannot validate partial responses and silently discards
+        // segment bytes, leaving MSE empty and stalling video playback.
+        .header(
+            "access-control-expose-headers",
+            "Content-Range, Content-Length, Accept-Ranges",
+        );
 
     let body = upstream.bytes().await?.to_vec();
     let t_total = t0.elapsed();

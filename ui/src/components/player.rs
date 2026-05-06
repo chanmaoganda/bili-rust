@@ -1,11 +1,13 @@
+use crate::api;
 use crate::keys::{is_typing, KeydownGuard};
 use crate::types::{DashTrack, PlayInfo};
-use js_sys::{Array, Function, Reflect};
+use js_sys::{Array, Function, Reflect, JSON};
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{Element, HtmlVideoElement, KeyboardEvent};
+use web_sys::{Element, HtmlMediaElement, HtmlVideoElement, KeyboardEvent};
 
 #[component]
 pub fn Player(
@@ -45,8 +47,19 @@ pub fn Player(
             js_sys::encode_uri_component(&mpd)
         );
 
+        // Forward HTMLMediaElement errors to the backend log. When MSE rejects
+        // a SourceBuffer append (the silent-failure mode we hit on Windows),
+        // dash.js may surface it as a generic event but the <video>'s own
+        // `error` carries the MediaError code/message. Capturing both gives
+        // packaged builds a real diagnostic trail.
+        wire_video_error(&video);
+
         if let Err(e) = init_dashjs(&video, &url, start_at, on_time) {
             web_sys::console::error_1(&format!("dash.js init: {e:?}").into());
+            let detail = format!("\"{}\"", format!("{e:?}").replace('"', "\\\""));
+            spawn_local(async move {
+                let _ = api::log_player_event("INIT_FAIL", &detail).await;
+            });
         }
     });
 
@@ -218,10 +231,65 @@ fn init_dashjs(
     Ok(())
 }
 
+fn wire_video_error(video: &HtmlVideoElement) {
+    // .error() lives on HTMLMediaElement; HtmlVideoElement.deref() reaches it
+    // via wasm_bindgen but the binding is exposed directly on HtmlMediaElement.
+    let media: HtmlMediaElement = video.clone().unchecked_into();
+    let media_clone = media.clone();
+    let cb = Closure::<dyn Fn(JsValue)>::new(move |_e: JsValue| {
+        // MediaError shape: { code: 1..4, message: "..." }
+        let detail = if let Some(err) = media_clone.error() {
+            format!(
+                "{{\"code\":{},\"message\":{}}}",
+                err.code(),
+                serde_escape(&err.message())
+            )
+        } else {
+            "\"<no MediaError>\"".to_string()
+        };
+        spawn_local(async move {
+            let _ = api::log_player_event("VIDEO_ERROR", &detail).await;
+        });
+    });
+    let _ = media.add_event_listener_with_callback("error", cb.as_ref().unchecked_ref());
+    cb.forget();
+}
+
+fn serde_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn wire_event(player: &JsValue, event: &str, label: &'static str) -> Result<(), JsValue> {
     let on: Function = Reflect::get(player, &"on".into())?.dyn_into()?;
     let cb = Closure::<dyn Fn(JsValue)>::new(move |e: JsValue| {
         web_sys::console::log_2(&format!("[dash:{label}]").into(), &e);
+        // Mirror the event into the Rust log via the backend so packaged
+        // Windows builds (no devtools console) still leave a trace of what
+        // happened during playback. JSON.stringify swallows unsupported types
+        // (functions, cyclic refs); fall back to a placeholder so we still
+        // record the event name itself.
+        let detail = JSON::stringify(&e)
+            .ok()
+            .and_then(|s| s.as_string())
+            .unwrap_or_else(|| "\"<unstringifiable>\"".to_string());
+        let label_owned = label.to_string();
+        spawn_local(async move {
+            let _ = api::log_player_event(&label_owned, &detail).await;
+        });
     });
     let args = Array::new();
     args.push(&JsValue::from_str(event));

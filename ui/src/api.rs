@@ -80,7 +80,11 @@ pub async fn get_rcmd(
 ) -> Result<Vec<VideoCard>, String> {
     invoke(
         "get_rcmd",
-        RcmdArgs { fresh_idx, brush, last_showlist },
+        RcmdArgs {
+            fresh_idx,
+            brush,
+            last_showlist,
+        },
     )
     .await
 }
@@ -95,7 +99,14 @@ pub async fn feed_dislike(
 ) -> Result<(), String> {
     invoke(
         "feed_dislike",
-        DislikeArgs { goto, id, mid, rid, tag_id, reason_id },
+        DislikeArgs {
+            goto,
+            id,
+            mid,
+            rid,
+            tag_id,
+            reason_id,
+        },
     )
     .await
 }
@@ -169,7 +180,15 @@ pub async fn like_video(bvid: &str, like: bool) -> Result<(), String> {
 }
 
 pub async fn coin_video(bvid: &str, multiply: u8, with_like: bool) -> Result<(), String> {
-    invoke("coin_video", CoinArgs { bvid, multiply, with_like }).await
+    invoke(
+        "coin_video",
+        CoinArgs {
+            bvid,
+            multiply,
+            with_like,
+        },
+    )
+    .await
 }
 
 pub async fn triple_video(bvid: &str) -> Result<TripleResult, String> {
@@ -182,6 +201,16 @@ pub async fn follow_user(mid: i64, follow: bool) -> Result<(), String> {
 
 pub async fn get_decoder_probe() -> Result<DecoderProbe, String> {
     invoke("get_decoder_probe", NoArgs {}).await
+}
+
+#[derive(Serialize)]
+struct PlayerLogArgs<'a> {
+    label: &'a str,
+    detail: &'a str,
+}
+
+pub async fn log_player_event(label: &str, detail: &str) -> Result<(), String> {
+    invoke("log_player_event", PlayerLogArgs { label, detail }).await
 }
 
 #[derive(Serialize)]
@@ -230,7 +259,14 @@ pub async fn report_heartbeat(
 ) -> Result<(), String> {
     invoke(
         "report_heartbeat",
-        HeartbeatArgs { bvid, aid, cid, played_time, duration, play_type },
+        HeartbeatArgs {
+            bvid,
+            aid,
+            cid,
+            played_time,
+            duration,
+            play_type,
+        },
     )
     .await
 }

@@ -119,6 +119,10 @@ pub struct DashTrack {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
 pub struct DecoderProbe {
     #[serde(default)]
+    pub platform: String,
+    #[serde(default)]
+    pub pipeline: String,
+    #[serde(default)]
     pub hw_decoders: Vec<String>,
     #[serde(default)]
     pub libva_driver: Option<String>,

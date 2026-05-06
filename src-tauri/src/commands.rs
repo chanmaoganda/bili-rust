@@ -146,12 +146,22 @@ pub struct DashTrack {
 
 #[derive(Serialize)]
 pub struct DecoderProbe {
+    /// Host OS — UI uses this to decide which probe details are meaningful.
+    /// On Windows/macOS the GStreamer probe is N/A and we report the webview's
+    /// native pipeline instead.
+    pub platform: String,
+    /// One-line description of the webview's video pipeline (e.g.
+    /// "WebView2 / Media Foundation" on Windows). Empty on Linux — the host
+    /// gst-inspect probe carries that signal there.
+    pub pipeline: String,
     /// GStreamer hardware decoder element factories detected via gst-inspect-1.0.
+    /// Only populated on Linux; the gst pipeline is what WebKit2GTK actually drives.
     pub hw_decoders: Vec<String>,
     pub libva_driver: Option<String>,
     pub gst_vaapi_all_drivers: Option<String>,
     pub webkit_disable_compositing: Option<String>,
     /// `false` if `gst-inspect-1.0` is missing or failed; `error` carries the reason.
+    /// On non-Linux this is false but `error` is None — the UI hides the line.
     pub gst_inspect_ok: bool,
     pub error: Option<String>,
 }
@@ -434,11 +444,7 @@ pub async fn get_action_state(
 }
 
 #[tauri::command]
-pub async fn like_video(
-    state: BiliState<'_>,
-    bvid: String,
-    like: bool,
-) -> Result<(), String> {
+pub async fn like_video(state: BiliState<'_>, bvid: String, like: bool) -> Result<(), String> {
     state.like_video(&bvid, like).await.map_err(err)
 }
 
@@ -466,11 +472,7 @@ pub async fn triple_video(state: BiliState<'_>, bvid: String) -> Result<TripleRe
 }
 
 #[tauri::command]
-pub async fn follow_user(
-    state: BiliState<'_>,
-    mid: i64,
-    follow: bool,
-) -> Result<(), String> {
+pub async fn follow_user(state: BiliState<'_>, mid: i64, follow: bool) -> Result<(), String> {
     state.relation_modify(mid, follow).await.map_err(err)
 }
 
@@ -544,7 +546,11 @@ pub async fn get_space_videos(
     let list: Vec<VideoCard> = raw
         .pointer("/list/vlist")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| card_from_space_item(v, mid)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| card_from_space_item(v, mid))
+                .collect()
+        })
         .unwrap_or_default();
     Ok(SpaceVideoPage {
         list,
@@ -706,10 +712,7 @@ pub struct QrPoll {
 }
 
 #[tauri::command]
-pub async fn qr_login_poll(
-    state: BiliState<'_>,
-    qrcode_key: String,
-) -> Result<QrPoll, String> {
+pub async fn qr_login_poll(state: BiliState<'_>, qrcode_key: String) -> Result<QrPoll, String> {
     let status = auth::qr_poll(&qrcode_key).await.map_err(err)?;
     let label = match status {
         QrStatus::Scanning => "scanning",
@@ -820,6 +823,31 @@ pub async fn get_decoder_probe() -> Result<DecoderProbe, String> {
 
     let env_var = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
 
+    let platform = std::env::consts::OS.to_string();
+
+    // gst-inspect only describes the pipeline that WebKit2GTK uses (Linux).
+    // On Windows/macOS the webview drives its own decoders (WebView2 →
+    // Media Foundation, WKWebView → AVFoundation) and the probe would just
+    // print a misleading "program not found" error.
+    if platform != "linux" {
+        let pipeline = match platform.as_str() {
+            "windows" => "WebView2 / Media Foundation (D3D11)",
+            "macos" => "WKWebView / AVFoundation (VideoToolbox)",
+            _ => "",
+        }
+        .to_string();
+        return Ok(DecoderProbe {
+            platform,
+            pipeline,
+            hw_decoders: Vec::new(),
+            libva_driver: None,
+            gst_vaapi_all_drivers: None,
+            webkit_disable_compositing: None,
+            gst_inspect_ok: false,
+            error: None,
+        });
+    }
+
     let probe = match tokio::process::Command::new("gst-inspect-1.0")
         .output()
         .await
@@ -841,6 +869,8 @@ pub async fn get_decoder_probe() -> Result<DecoderProbe, String> {
                 }
             }
             DecoderProbe {
+                platform,
+                pipeline: String::new(),
                 hw_decoders: found,
                 libva_driver: env_var("LIBVA_DRIVER_NAME"),
                 gst_vaapi_all_drivers: env_var("GST_VAAPI_ALL_DRIVERS"),
@@ -850,6 +880,8 @@ pub async fn get_decoder_probe() -> Result<DecoderProbe, String> {
             }
         }
         Ok(out) => DecoderProbe {
+            platform,
+            pipeline: String::new(),
             hw_decoders: Vec::new(),
             libva_driver: env_var("LIBVA_DRIVER_NAME"),
             gst_vaapi_all_drivers: env_var("GST_VAAPI_ALL_DRIVERS"),
@@ -862,6 +894,8 @@ pub async fn get_decoder_probe() -> Result<DecoderProbe, String> {
             )),
         },
         Err(e) => DecoderProbe {
+            platform,
+            pipeline: String::new(),
             hw_decoders: Vec::new(),
             libva_driver: env_var("LIBVA_DRIVER_NAME"),
             gst_vaapi_all_drivers: env_var("GST_VAAPI_ALL_DRIVERS"),
@@ -872,6 +906,33 @@ pub async fn get_decoder_probe() -> Result<DecoderProbe, String> {
     };
 
     Ok(probe)
+}
+
+/// Bridge dash.js / video lifecycle events into the persistent backend log.
+/// In a packaged Windows build there's no devtools console, so player errors
+/// would otherwise vanish. The frontend stringifies the event payload (via
+/// JSON.stringify) and we route it through `tracing` so it shows up in
+/// `bili-rust.log`.
+#[tauri::command]
+pub fn log_player_event(label: String, detail: String) {
+    // Trim huge payloads (e.g. fragment objects with full request copies) so
+    // the log file stays readable. We slice on a char boundary, so the cap is
+    // approximate — that's fine for a diagnostic log.
+    const MAX: usize = 1024;
+    let detail_trimmed = if detail.len() > MAX {
+        let mut end = MAX;
+        while !detail.is_char_boundary(end) && end > 0 {
+            end -= 1;
+        }
+        format!("{}…[truncated {} bytes]", &detail[..end], detail.len() - end)
+    } else {
+        detail
+    };
+    if label.contains("ERROR") || label.contains("FAIL") {
+        tracing::warn!(label = %label, detail = %detail_trimmed, "player event");
+    } else {
+        tracing::info!(label = %label, detail = %detail_trimmed, "player event");
+    }
 }
 
 /// Map a JSON reply node to our typed Comment. `depth` guards inline-replies

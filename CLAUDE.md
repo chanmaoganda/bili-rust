@@ -22,6 +22,7 @@ The release profile in the workspace `Cargo.toml` uses `lto = true`, `codegen-un
 | Release build (binary + bundles) | `cargo tauri build` |
 | Release binary, no installers | `cargo tauri build --no-bundle` |
 | Host-native installers (deb/rpm/appimage on Linux, msi/nsis on Windows, app/dmg on macOS) | `./scripts/bundle.sh` |
+| Cross-build Windows NSIS installer from Linux | `./scripts/build-windows.sh` (needs `mingw-w64-gcc` + `nsis`) |
 | UI alone (WASM → `ui/dist/`) | `cd ui && trunk build --release` |
 | UI dev server only | `cd ui && trunk serve --port 1420` |
 | Backend type-check | `cargo check -p bili-rust` (or `cd src-tauri && cargo check`) |
