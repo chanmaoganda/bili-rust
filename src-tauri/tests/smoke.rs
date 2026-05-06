@@ -80,10 +80,11 @@ async fn attribute_for_followings() {
     // 1) First page of regular followings (most-recent first).
     let regular = bili.followings(uid, 1, 20).await.expect("followings");
     println!(
-        "\n=== /x/relation/followings (first {} entries) ===",
-        regular.len()
+        "\n=== /x/relation/followings (first {} of {} entries) ===",
+        regular.list.len(),
+        regular.total
     );
-    probe_attributes(&bili, &regular).await;
+    probe_attributes(&bili, &regular.list).await;
 
     // 2) "特别关注" tag (tag_id = -10). Most likely to surface attribute=130.
     let special = match bili.followings_tag(-10, 1, 20).await {

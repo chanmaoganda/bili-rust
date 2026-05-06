@@ -304,6 +304,16 @@ pub async fn get_space_videos(mid: i64, pn: u32, ps: u32) -> Result<SpaceVideoPa
 }
 
 #[derive(Serialize)]
+struct PageArgs {
+    pn: u32,
+    ps: u32,
+}
+
+pub async fn get_followings(pn: u32, ps: u32) -> Result<FollowingsPage, String> {
+    invoke("get_followings", PageArgs { pn, ps }).await
+}
+
+#[derive(Serialize)]
 struct HeartbeatArgs<'a> {
     bvid: &'a str,
     aid: i64,

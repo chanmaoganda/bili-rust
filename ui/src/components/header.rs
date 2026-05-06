@@ -22,6 +22,7 @@ pub fn Header() -> impl IntoView {
             <nav class="top-nav">
                 <A href="/history"><span class="nav-link">"历史"</span></A>
                 <A href="/toview"><span class="nav-link">"稍后再看"</span></A>
+                <A href="/followees"><span class="nav-link">"关注"</span></A>
             </nav>
             <div class="me">
                 {move || {

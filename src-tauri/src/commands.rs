@@ -485,6 +485,55 @@ pub async fn is_following(state: BiliState<'_>, mid: i64) -> Result<bool, String
 }
 
 #[derive(Serialize)]
+pub struct FollowingItemDto {
+    pub mid: i64,
+    pub uname: String,
+    pub face: String,
+    pub sign: String,
+    pub mtime: i64,
+    pub special: i64,
+}
+
+#[derive(Serialize)]
+pub struct FollowingsPageDto {
+    pub list: Vec<FollowingItemDto>,
+    pub page: u32,
+    pub size: u32,
+    pub total: i64,
+}
+
+#[tauri::command]
+pub async fn get_followings(
+    state: BiliState<'_>,
+    pn: u32,
+    ps: u32,
+) -> Result<FollowingsPageDto, String> {
+    let nav = state.nav().await.map_err(err)?;
+    if !nav.data.is_login {
+        return Err("not logged in".to_string());
+    }
+    let page = state.followings(nav.data.mid, pn, ps).await.map_err(err)?;
+    let list = page
+        .list
+        .into_iter()
+        .map(|it| FollowingItemDto {
+            mid: it.mid,
+            uname: it.uname,
+            face: proxy_image(&it.face),
+            sign: it.sign,
+            mtime: it.mtime,
+            special: it.special,
+        })
+        .collect();
+    Ok(FollowingsPageDto {
+        list,
+        page: pn,
+        size: ps,
+        total: page.total,
+    })
+}
+
+#[derive(Serialize)]
 pub struct SpaceInfo {
     pub mid: i64,
     pub name: String,

@@ -230,6 +230,27 @@ pub struct SpaceVideoPage {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct FollowingItem {
+    pub mid: i64,
+    pub uname: String,
+    pub face: String,
+    #[serde(default)]
+    pub sign: String,
+    #[serde(default)]
+    pub mtime: i64,
+    #[serde(default)]
+    pub special: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct FollowingsPage {
+    pub list: Vec<FollowingItem>,
+    pub page: u32,
+    pub size: u32,
+    pub total: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct QrStart {
     pub url: String,
     pub qrcode_key: String,

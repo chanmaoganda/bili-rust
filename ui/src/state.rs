@@ -1,5 +1,6 @@
-use crate::types::VideoCard;
+use crate::types::{FollowingItem, VideoCard};
 use leptos::prelude::*;
+use std::collections::HashSet;
 
 /// Global "login epoch" — bumped after a successful QR login so any
 /// `LocalResource` that depends on `get_user_info()` (Header, Space me-check,
@@ -74,5 +75,39 @@ impl RecommendState {
         self.error.set(None);
         self.end_reached.set(false);
         self.scroll_y.set(0.0);
+    }
+}
+
+// Followees-page state lifted to App scope so the loaded list, search query,
+// and (most importantly) the user's checkbox selection survive remounts —
+// e.g. when bouncing through /space/<mid> to inspect a creator before deciding
+// whether to unfollow them.
+#[derive(Clone, Copy)]
+pub struct FolloweesState {
+    pub items: RwSignal<Vec<FollowingItem>>,
+    pub total: RwSignal<i64>,
+    pub next_pn: RwSignal<u32>,
+    pub attempted: RwSignal<bool>,
+    pub end_reached: RwSignal<bool>,
+    pub query: RwSignal<String>,
+    pub selected: RwSignal<HashSet<i64>>,
+    pub scroll_y: RwSignal<f64>,
+    /// Followee currently shown in the right-side preview pane.
+    pub preview: RwSignal<Option<FollowingItem>>,
+}
+
+impl FolloweesState {
+    pub fn new() -> Self {
+        Self {
+            items: RwSignal::new(Vec::new()),
+            total: RwSignal::new(0),
+            next_pn: RwSignal::new(1),
+            attempted: RwSignal::new(false),
+            end_reached: RwSignal::new(false),
+            query: RwSignal::new(String::new()),
+            selected: RwSignal::new(HashSet::new()),
+            scroll_y: RwSignal::new(0.0),
+            preview: RwSignal::new(None),
+        }
     }
 }

@@ -88,6 +88,7 @@ pub fn run() {
             commands::triple_video,
             commands::follow_user,
             commands::is_following,
+            commands::get_followings,
             commands::get_space_info,
             commands::get_space_videos,
             commands::report_heartbeat,
