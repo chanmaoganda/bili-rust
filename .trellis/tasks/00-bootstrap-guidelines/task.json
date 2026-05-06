@@ -1,0 +1,35 @@
+{
+  "id": "00-bootstrap-guidelines",
+  "name": "Bootstrap Guidelines",
+  "description": "Fill in project development guidelines for AI agents",
+  "status": "in_progress",
+  "dev_type": "docs",
+  "priority": "P1",
+  "creator": "EthanWang",
+  "assignee": "EthanWang",
+  "createdAt": "2026-05-06",
+  "completedAt": null,
+  "commit": null,
+  "subtasks": [
+    {
+      "name": "Fill guidelines for bili-rust",
+      "status": "pending"
+    },
+    {
+      "name": "Fill guidelines for bili-rust-ui",
+      "status": "pending"
+    },
+    {
+      "name": "Add code examples",
+      "status": "pending"
+    }
+  ],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/spec/bili-rust/",
+    ".trellis/spec/bili-rust-ui/"
+  ],
+  "notes": "First-time setup task created by trellis init (backend project)",
+  "meta": {}
+}

@@ -1,0 +1,47 @@
+# Worktree Configuration for Multi-Agent Pipeline
+# Used for worktree initialization in multi-agent workflows
+#
+# All paths are relative to project root
+
+#-------------------------------------------------------------------------------
+# Paths
+#-------------------------------------------------------------------------------
+
+# Worktree storage directory (relative to project root)
+worktree_dir: ../trellis-worktrees
+
+#-------------------------------------------------------------------------------
+# Files to Copy
+#-------------------------------------------------------------------------------
+
+# Files to copy to each worktree (each worktree needs independent copy)
+# These files contain sensitive info or need worktree-independent config
+copy:
+  # Workflow config
+  - .trellis/.developer
+  # Bilibili session cookies (gitignored; required at backend startup,
+  # otherwise the app boots into /login on every worktree)
+  - cookies.json
+
+#-------------------------------------------------------------------------------
+# Post-Create Hooks
+#-------------------------------------------------------------------------------
+
+# Commands to run after creating worktree
+# Executed in worktree directory, in order, abort on failure
+post_create:
+  # Trunk builds the Leptos UI to wasm32-unknown-unknown; idempotent if
+  # the target is already installed.
+  - rustup target add wasm32-unknown-unknown
+
+#-------------------------------------------------------------------------------
+# Check Agent Verification (Ralph Loop)
+#-------------------------------------------------------------------------------
+
+# Commands to verify code quality before allowing check agent to finish
+# If configured, Ralph Loop will run these commands - all must pass to allow completion
+# If not configured or empty, trusts agent's completion markers
+verify:
+  - cargo fmt --all -- --check
+  - cargo clippy --workspace --all-targets -- -D warnings
+  - cargo check --workspace --all-targets
