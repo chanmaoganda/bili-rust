@@ -12,7 +12,7 @@ const SCROLL_TRAVEL_S: f64 = 10.0;
 const TB_HOLD_S: f64 = 5.0;
 const SEEK_THRESHOLD_S: f64 = 2.0;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 enum Kind {
     Scroll,
     Top,
@@ -23,7 +23,8 @@ struct Active {
     el: HtmlElement,
     kind: Kind,
     spawn_t: f64,
-    travel: f64, // container_w + width, cached so we don't read layout each frame
+    travel: f64,         // container_w + width, cached so we don't read layout each frame
+    speed_at_spawn: f64, // px/s captured at spawn so live speed changes don't warp in-flight comments
 }
 
 struct LoopState {
@@ -57,6 +58,31 @@ impl LoopState {
         self.lane_free_top = [0.0; TB_LANES];
         self.lane_free_bot = [0.0; TB_LANES];
     }
+
+    fn cull_kind(&mut self, layer: &HtmlDivElement, kind: Kind) {
+        let mut i = 0;
+        while i < self.active.len() {
+            if self.active[i].kind == kind {
+                let removed = self.active.swap_remove(i);
+                let _ = layer.remove_child(&removed.el);
+            } else {
+                i += 1;
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+struct TickOpts {
+    enabled: bool,
+    opacity: f64,
+    area: f64,
+    speed: f64,
+    show_scroll: bool,
+    show_top: bool,
+    show_bottom: bool,
+    font_scale: f64,
+    density: u32,
 }
 
 #[component]
@@ -65,6 +91,13 @@ pub fn DanmakuOverlay(
     danmakus: Signal<Option<Vec<Danmaku>>>,
     enabled: Signal<bool>,
     opacity: Signal<f64>,
+    area: Signal<f64>,
+    speed: Signal<f64>,
+    show_scroll: Signal<bool>,
+    show_top: Signal<bool>,
+    show_bottom: Signal<bool>,
+    font_scale: Signal<f64>,
+    density: Signal<u32>,
 ) -> impl IntoView {
     let layer_ref = NodeRef::<leptos::html::Div>::new();
 
@@ -102,8 +135,6 @@ pub fn DanmakuOverlay(
         }
 
         let video_sig = video;
-        let enabled_sig = enabled;
-        let opacity_sig = opacity;
         let layer_for_loop = layer.clone();
         let state_for_loop = state.clone();
         let raf_for_loop = raf_holder.clone();
@@ -116,13 +147,24 @@ pub fn DanmakuOverlay(
             let layer = layer_for_loop.clone();
             let video_el = video_sig.get_untracked();
 
+            let opts = TickOpts {
+                enabled: enabled.get_untracked(),
+                opacity: opacity.get_untracked(),
+                area: area.get_untracked(),
+                speed: speed.get_untracked(),
+                show_scroll: show_scroll.get_untracked(),
+                show_top: show_top.get_untracked(),
+                show_bottom: show_bottom.get_untracked(),
+                font_scale: font_scale.get_untracked(),
+                density: density.get_untracked(),
+            };
+
             tick(
                 &state_for_loop,
                 &dm_for_loop,
                 &layer,
                 video_el.as_ref(),
-                enabled_sig.get_untracked(),
-                opacity_sig.get_untracked(),
+                opts,
             );
 
             if let Some(c) = raf_for_loop.borrow().as_ref() {
@@ -163,10 +205,9 @@ fn tick(
     dm: &Rc<RefCell<Rc<Vec<Danmaku>>>>,
     layer: &HtmlDivElement,
     video: Option<&HtmlVideoElement>,
-    enabled: bool,
-    opacity: f64,
+    opts: TickOpts,
 ) {
-    if !enabled {
+    if !opts.enabled {
         let mut s = state.borrow_mut();
         if !s.active.is_empty() {
             s.clear_dom(layer);
@@ -191,6 +232,17 @@ fn tick(
     }
     s.last_t = t;
 
+    // Per-mode toggles: cull on transition to off so disabled modes vanish immediately.
+    if !opts.show_scroll {
+        s.cull_kind(layer, Kind::Scroll);
+    }
+    if !opts.show_top {
+        s.cull_kind(layer, Kind::Top);
+    }
+    if !opts.show_bottom {
+        s.cull_kind(layer, Kind::Bottom);
+    }
+
     // Container width drives both scroll travel and lane height calc.
     let container_w = layer.client_width() as f64;
     let container_h = layer.client_height() as f64;
@@ -201,11 +253,24 @@ fn tick(
     // Lane height: keep ≤ 28px lanes for default size. Scale with container.
     let lane_h = (container_h / SCROLL_LANES as f64).clamp(20.0, 36.0);
 
+    // Area-restricted scroll lanes: ceil(SCROLL_LANES * area), clamped to [1, max].
+    let scroll_lane_cap = ((SCROLL_LANES as f64) * opts.area).ceil() as usize;
+    let scroll_lane_cap = scroll_lane_cap.clamp(1, SCROLL_LANES);
+
     // Spawn new entries that have come due.
     while s.cursor < list.len() && list[s.cursor].progress <= t + 0.05 {
         let d = list[s.cursor].clone();
         s.cursor += 1;
-        spawn_one(&mut s, layer, &d, t, container_w, lane_h, opacity);
+        spawn_one(
+            &mut s,
+            layer,
+            &d,
+            t,
+            container_w,
+            lane_h,
+            scroll_lane_cap,
+            &opts,
+        );
     }
 
     // Update / cull active.
@@ -214,7 +279,7 @@ fn tick(
         let a = &s.active[i];
         let age = t - a.spawn_t;
         let done = match a.kind {
-            Kind::Scroll => age >= a.travel / scroll_speed(a.travel),
+            Kind::Scroll => age >= a.travel / a.speed_at_spawn,
             Kind::Top | Kind::Bottom => age >= TB_HOLD_S,
         };
         if done {
@@ -225,7 +290,7 @@ fn tick(
         if let Kind::Scroll = a.kind {
             // x = container_w - speed * age; element position-anchored at left=0,
             // so translateX moves it from container_w into negative width.
-            let x = container_w - scroll_speed(a.travel) * age;
+            let x = container_w - a.speed_at_spawn * age;
             let _ =
                 a.el.style()
                     .set_property("transform", &format!("translateX({x:.1}px)"));
@@ -234,10 +299,11 @@ fn tick(
     }
 }
 
-fn scroll_speed(travel: f64) -> f64 {
-    travel / SCROLL_TRAVEL_S
+fn scroll_speed_for(travel: f64, speed_mult: f64) -> f64 {
+    travel / (SCROLL_TRAVEL_S / speed_mult)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_one(
     s: &mut LoopState,
     layer: &HtmlDivElement,
@@ -245,7 +311,8 @@ fn spawn_one(
     t: f64,
     container_w: f64,
     lane_h: f64,
-    opacity: f64,
+    scroll_lane_cap: usize,
+    opts: &TickOpts,
 ) {
     let kind = match d.mode {
         4 => Kind::Bottom,
@@ -253,9 +320,32 @@ fn spawn_one(
         _ => Kind::Scroll,
     };
 
+    // Per-mode visibility — silently drop hidden modes. Cursor still advances
+    // so re-enabling mid-playback resumes from the live timestamp instead of
+    // backfilling an avalanche of skipped comments.
+    let visible = match kind {
+        Kind::Scroll => opts.show_scroll,
+        Kind::Top => opts.show_top,
+        Kind::Bottom => opts.show_bottom,
+    };
+    if !visible {
+        return;
+    }
+
+    // Density cap — only counts scroll danmaku since top/bottom are already
+    // capped by their fixed lane count.
+    if let Kind::Scroll = kind {
+        if opts.density > 0 {
+            let active_scrolls = s.active.iter().filter(|a| a.kind == Kind::Scroll).count();
+            if active_scrolls >= opts.density as usize {
+                return;
+            }
+        }
+    }
+
     // Pick a free lane; drop on saturation (matches Bilibili behavior).
     let lane = match kind {
-        Kind::Scroll => find_free_lane(&s.lane_free_scroll, t),
+        Kind::Scroll => find_free_lane(&s.lane_free_scroll[..scroll_lane_cap], t),
         Kind::Top => find_free_lane(&s.lane_free_top, t),
         Kind::Bottom => find_free_lane(&s.lane_free_bot, t),
     };
@@ -277,12 +367,14 @@ fn spawn_one(
     span.set_text_content(Some(&d.text));
 
     let style = span.style();
-    let font_px = font_size_px(d.size);
-    let _ = style.set_property("font-size", &format!("{font_px}px"));
+    let font_px = (font_size_px(d.size) as f64 * opts.font_scale)
+        .round()
+        .max(8.0);
+    let _ = style.set_property("font-size", &format!("{font_px:.0}px"));
     if d.color != 0xFFFFFF {
         let _ = style.set_property("color", &format!("#{:06X}", d.color));
     }
-    let _ = style.set_property("opacity", &format!("{opacity:.3}"));
+    let _ = style.set_property("opacity", &format!("{:.3}", opts.opacity));
 
     // Lane positioning. Scroll/top lanes count from the top of the container;
     // bottom lanes count up from the bottom edge. Real Bilibili lets scroll
@@ -318,17 +410,19 @@ fn spawn_one(
     match kind {
         Kind::Scroll => {
             let travel = container_w + width;
-            let speed = scroll_speed(travel);
+            let speed = scroll_speed_for(travel, opts.speed);
             // Lane is occupied until the entry's tail clears the right edge.
             // Entry tail clears when speed * dt = width  →  dt = width / speed.
-            // Free at t + dt + small gap to keep density readable.
+            // Free at t + dt + small gap to keep density readable. Gap scales
+            // inversely with speed so the visible spacing stays roughly constant.
             let dt = width / speed;
-            s.lane_free_scroll[lane] = t + dt + 0.15;
+            s.lane_free_scroll[lane] = t + dt + 0.15 / opts.speed;
             s.active.push(Active {
                 el: span,
                 kind,
                 spawn_t: t,
                 travel,
+                speed_at_spawn: speed,
             });
         }
         Kind::Top => {
@@ -338,6 +432,7 @@ fn spawn_one(
                 kind,
                 spawn_t: t,
                 travel: 0.0,
+                speed_at_spawn: 0.0,
             });
         }
         Kind::Bottom => {
@@ -347,6 +442,7 @@ fn spawn_one(
                 kind,
                 spawn_t: t,
                 travel: 0.0,
+                speed_at_spawn: 0.0,
             });
         }
     }
