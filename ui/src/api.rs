@@ -146,6 +146,72 @@ pub async fn get_comments(bvid: &str, pn: u32, sort: u32) -> Result<CommentPage,
 }
 
 #[derive(Serialize)]
+struct PostCommentArgs<'a> {
+    aid: i64,
+    message: &'a str,
+    root: Option<i64>,
+    parent: Option<i64>,
+}
+
+pub async fn post_comment(
+    aid: i64,
+    message: &str,
+    root: Option<i64>,
+    parent: Option<i64>,
+) -> Result<PostedComment, String> {
+    invoke(
+        "post_comment",
+        PostCommentArgs {
+            aid,
+            message,
+            root,
+            parent,
+        },
+    )
+    .await
+}
+
+#[derive(Serialize)]
+struct SendDanmakuArgs<'a> {
+    bvid: &'a str,
+    aid: i64,
+    cid: i64,
+    msg: &'a str,
+    #[serde(rename = "progressMs")]
+    progress_ms: i64,
+    mode: u8,
+    color: u32,
+    fontsize: u8,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn send_danmaku(
+    bvid: &str,
+    aid: i64,
+    cid: i64,
+    msg: &str,
+    progress_ms: i64,
+    mode: u8,
+    color: u32,
+    fontsize: u8,
+) -> Result<PostedDanmaku, String> {
+    invoke(
+        "send_danmaku",
+        SendDanmakuArgs {
+            bvid,
+            aid,
+            cid,
+            msg,
+            progress_ms,
+            mode,
+            color,
+            fontsize,
+        },
+    )
+    .await
+}
+
+#[derive(Serialize)]
 struct ActionStateArgs<'a> {
     bvid: &'a str,
     mid: i64,

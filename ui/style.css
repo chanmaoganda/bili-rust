@@ -231,6 +231,59 @@ main { padding: 20px; max-width: 1600px; margin: 0 auto; }
 .comment-replies .comment-item { padding: 8px 0; border-bottom: none; }
 .comment-replies .comment-item img.avatar { width: 28px; height: 28px; }
 
+.comment-composer {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 0 0 16px; padding: 12px;
+  background: var(--panel); border: 1px solid #2b303b; border-radius: 8px;
+}
+.comment-replies .comment-composer { margin: 8px 0 0; padding: 8px; }
+.comment-composer-signin {
+  flex-direction: row; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 13px; padding: 10px 12px;
+}
+.comment-composer-signin .login-link { color: var(--accent); }
+.comment-input {
+  width: 100%; min-height: 64px; resize: vertical;
+  background: #0f1218; color: var(--text);
+  border: 1px solid #2b303b; border-radius: 6px;
+  padding: 8px 10px; font: inherit; font-size: 13px; line-height: 1.5;
+}
+.comment-input:focus { outline: none; border-color: var(--accent); }
+.comment-input:disabled { opacity: 0.6; }
+.comment-composer-row {
+  display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+  font-size: 12px;
+}
+.comment-composer-row .error { color: #ff6b6b; }
+.comment-submit {
+  background: var(--accent); color: #0c1018;
+  border: none; border-radius: 6px;
+  padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.comment-submit:hover:not(:disabled) { filter: brightness(1.1); }
+.comment-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.comment-reply-btn {
+  background: transparent; color: var(--muted);
+  border: 1px solid #2b303b; border-radius: 4px;
+  font: inherit; font-size: 12px; cursor: pointer;
+  padding: 1px 8px; line-height: 1.4;
+}
+.comment-reply-btn:hover { color: var(--accent); border-color: var(--accent); }
+.comment-meta { align-items: center; }
+
+.dm-send-inline {
+  flex: 0 0 200px;
+  height: 28px;
+  background: #0f1218; color: var(--text);
+  border: 1px solid #2b303b; border-radius: 6px;
+  padding: 0 10px; font: inherit; font-size: 12px;
+  transition: border-color 0.15s ease;
+}
+.dm-send-inline:focus { outline: none; border-color: var(--accent); }
+.dm-send-inline.is-sending { opacity: 0.7; }
+.dm-send-inline.is-ok { border-color: var(--accent); }
+.dm-send-inline.is-err { border-color: #ff6b6b; }
+
 .feed-toolbar { display: flex; justify-content: flex-end; gap: 8px; margin: 0 0 14px; }
 .refresh {
   background: var(--panel); color: var(--text);
