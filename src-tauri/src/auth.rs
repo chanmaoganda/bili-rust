@@ -5,8 +5,7 @@ use reqwest::header::SET_COOKIE;
 use serde::Deserialize;
 use serde_json::Value;
 
-const QR_GENERATE: &str =
-    "https://passport.bilibili.com/x/passport-login/web/qrcode/generate";
+const QR_GENERATE: &str = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate";
 const QR_POLL: &str = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll";
 
 pub struct QrStart {

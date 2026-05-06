@@ -7,7 +7,9 @@ use bili_rust_lib::cookies::Cookies;
 fn cookie_path() -> std::path::PathBuf {
     std::env::var("BILI_COOKIES")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../cookies.json"))
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../cookies.json")
+        })
 }
 
 #[tokio::test]
@@ -16,8 +18,14 @@ async fn nav_returns_logged_in() {
     let cookies = Cookies::load(cookie_path()).expect("load cookies");
     let bili = Bili::new(cookies).expect("client");
     let nav = bili.nav().await.expect("nav");
-    println!("isLogin={} uname={} mid={}", nav.data.is_login, nav.data.uname, nav.data.mid);
-    assert!(nav.data.is_login, "cookies are stale — log in again via the app's /login route");
+    println!(
+        "isLogin={} uname={} mid={}",
+        nav.data.is_login, nav.data.uname, nav.data.mid
+    );
+    assert!(
+        nav.data.is_login,
+        "cookies are stale — log in again via the app's /login route"
+    );
 }
 
 #[tokio::test]
@@ -71,7 +79,10 @@ async fn attribute_for_followings() {
 
     // 1) First page of regular followings (most-recent first).
     let regular = bili.followings(uid, 1, 20).await.expect("followings");
-    println!("\n=== /x/relation/followings (first {} entries) ===", regular.len());
+    println!(
+        "\n=== /x/relation/followings (first {} entries) ===",
+        regular.len()
+    );
     probe_attributes(&bili, &regular).await;
 
     // 2) "特别关注" tag (tag_id = -10). Most likely to surface attribute=130.
@@ -82,7 +93,10 @@ async fn attribute_for_followings() {
             Vec::new()
         }
     };
-    println!("\n=== /x/relation/tag tagid=-10 (special, {} entries) ===", special.len());
+    println!(
+        "\n=== /x/relation/tag tagid=-10 (special, {} entries) ===",
+        special.len()
+    );
     probe_attributes(&bili, &special).await;
 }
 
@@ -127,18 +141,36 @@ async fn play_url_returns_dash() {
         .iter()
         .find(|i| i.get("goto").and_then(|v| v.as_str()) == Some("av"))
         .expect("an av item");
-    let bvid = item.get("bvid").and_then(|v| v.as_str()).expect("bvid").to_string();
+    let bvid = item
+        .get("bvid")
+        .and_then(|v| v.as_str())
+        .expect("bvid")
+        .to_string();
     let view = bili.view(&bvid).await.expect("view");
     let raw = bili.play_url(&bvid, view.cid, 80).await.expect("playurl");
     let dash = raw.get("dash").expect("dash present");
-    let v_count = dash.get("video").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    let a_count = dash.get("audio").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let v_count = dash
+        .get("video")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let a_count = dash
+        .get("audio")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
     println!("bvid={bvid} video tracks={v_count} audio tracks={a_count}");
     let first_v = dash.pointer("/video/0").expect("video[0]");
-    println!("VIDEO[0] keys: {:?}", first_v.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+    println!(
+        "VIDEO[0] keys: {:?}",
+        first_v.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
     println!("VIDEO[0]: {first_v:#}");
     let first_a = dash.pointer("/audio/0").expect("audio[0]");
-    println!("AUDIO[0] keys: {:?}", first_a.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+    println!(
+        "AUDIO[0] keys: {:?}",
+        first_a.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
     println!("AUDIO[0]: {first_a:#}");
     assert!(v_count > 0);
     assert!(a_count > 0);

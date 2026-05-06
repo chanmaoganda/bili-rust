@@ -93,28 +93,31 @@ pub fn History() -> impl IntoView {
 
     let sentinel_ref = NodeRef::<leptos::html::Div>::new();
     let sentinel_visible = RwSignal::new(false);
-    Effect::new(move |_prev: Option<Option<ObserverGuard>>| -> Option<ObserverGuard> {
-        let sentinel = sentinel_ref.get()?;
-        let sentinel_el: web_sys::Element = sentinel.unchecked_into();
-        let closure = Closure::<dyn FnMut(js_sys::Array, IntersectionObserver)>::new(
-            move |entries: js_sys::Array, _obs: IntersectionObserver| {
-                let intersecting = entries
-                    .iter()
-                    .filter_map(|v| v.dyn_into::<IntersectionObserverEntry>().ok())
-                    .any(|e| e.is_intersecting());
-                sentinel_visible.set(intersecting);
-            },
-        );
-        let init = IntersectionObserverInit::new();
-        init.set_root_margin("300px");
-        let observer =
-            IntersectionObserver::new_with_options(closure.as_ref().unchecked_ref(), &init).ok()?;
-        observer.observe(&sentinel_el);
-        Some(ObserverGuard {
-            observer,
-            _closure: closure,
-        })
-    });
+    Effect::new(
+        move |_prev: Option<Option<ObserverGuard>>| -> Option<ObserverGuard> {
+            let sentinel = sentinel_ref.get()?;
+            let sentinel_el: web_sys::Element = sentinel.unchecked_into();
+            let closure = Closure::<dyn FnMut(js_sys::Array, IntersectionObserver)>::new(
+                move |entries: js_sys::Array, _obs: IntersectionObserver| {
+                    let intersecting = entries
+                        .iter()
+                        .filter_map(|v| v.dyn_into::<IntersectionObserverEntry>().ok())
+                        .any(|e| e.is_intersecting());
+                    sentinel_visible.set(intersecting);
+                },
+            );
+            let init = IntersectionObserverInit::new();
+            init.set_root_margin("300px");
+            let observer =
+                IntersectionObserver::new_with_options(closure.as_ref().unchecked_ref(), &init)
+                    .ok()?;
+            observer.observe(&sentinel_el);
+            Some(ObserverGuard {
+                observer,
+                _closure: closure,
+            })
+        },
+    );
     Effect::new(move |_| {
         if sentinel_visible.get()
             && !loading.get()

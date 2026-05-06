@@ -86,11 +86,7 @@ fn dispatch(
             .get("access-control-request-headers")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("-");
-        tracing::debug!(
-            kind = kind.label(),
-            req_headers = req_headers,
-            "preflight"
-        );
+        tracing::debug!(kind = kind.label(), req_headers = req_headers, "preflight");
         responder.respond(preflight_response());
         return;
     }

@@ -35,11 +35,7 @@ pub fn Space() -> impl IntoView {
     // Refresh follow state whenever mid changes (and ignore self).
     Effect::new(move |_| {
         let m = mid.get();
-        let my_mid = me
-            .get()
-            .and_then(|r| r.ok())
-            .map(|u| u.mid)
-            .unwrap_or(0);
+        let my_mid = me.get().and_then(|r| r.ok()).map(|u| u.mid).unwrap_or(0);
         following.set(false);
         if m <= 0 || m == my_mid {
             return;

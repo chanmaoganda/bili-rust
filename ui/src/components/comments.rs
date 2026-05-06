@@ -35,8 +35,7 @@ pub fn Comments(#[prop(into)] bvid: Signal<String>) -> impl IntoView {
                     if page.replies.is_empty() {
                         end_reached.set(true);
                     } else {
-                        let accumulated =
-                            items.with_untracked(|v| v.len()) + page.replies.len();
+                        let accumulated = items.with_untracked(|v| v.len()) + page.replies.len();
                         items.update(|v| v.extend(page.replies));
                         pn.update(|p| *p += 1);
                         if count > 0 && accumulated as i64 >= count {

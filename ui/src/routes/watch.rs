@@ -5,8 +5,8 @@
 use crate::api;
 use crate::components::comments::Comments;
 use crate::components::danmaku::DanmakuOverlay;
-use crate::components::stats_hud::StatsHud;
 use crate::components::player::Player;
+use crate::components::stats_hud::StatsHud;
 use crate::components::video_card::VideoCardView;
 use crate::keys::{is_typing, KeydownGuard};
 use crate::types::{fmt_ctime, fmt_views, ActionState, VideoCard};
@@ -45,10 +45,9 @@ struct SeekListenerGuard {
 
 impl Drop for SeekListenerGuard {
     fn drop(&mut self) {
-        let _ = self.video.remove_event_listener_with_callback(
-            "seeked",
-            self.closure.as_ref().unchecked_ref(),
-        );
+        let _ = self
+            .video
+            .remove_event_listener_with_callback("seeked", self.closure.as_ref().unchecked_ref());
     }
 }
 
@@ -57,9 +56,7 @@ pub fn Watch() -> impl IntoView {
     let params = use_params_map();
     let query = use_query_map();
     let bvid = Signal::derive(move || params.read().get("bvid").unwrap_or_default());
-    let cid = Signal::derive(move || {
-        query.read().get("cid").and_then(|s| s.parse::<i64>().ok())
-    });
+    let cid = Signal::derive(move || query.read().get("cid").and_then(|s| s.parse::<i64>().ok()));
 
     let qn = RwSignal::new(crate::prefs::get_preferred_qn());
     let resume_at = RwSignal::new(0.0_f64);
@@ -124,7 +121,8 @@ pub fn Watch() -> impl IntoView {
         }
         // Need a cid: prefer the URL, then fall back to whichever resource
         // has resolved with metadata for the current bvid.
-        let c = cid.get_untracked()
+        let c = cid
+            .get_untracked()
             .or_else(|| {
                 play.get()
                     .and_then(|r| r.ok())
@@ -264,9 +262,7 @@ pub fn Watch() -> impl IntoView {
                         action.set(s);
                     }
                 }
-                Err(e) => web_sys::console::warn_1(
-                    &format!("get_action_state: {e}").into(),
-                ),
+                Err(e) => web_sys::console::warn_1(&format!("get_action_state: {e}").into()),
             }
         });
     });
@@ -450,88 +446,85 @@ pub fn Watch() -> impl IntoView {
     // POSTs to /x/click-interface/web/heartbeat — without these, videos played
     // through this client would never show up in /history. Cadence (15s) and
     // play_type semantics mirror what the official web player sends.
-    Effect::new(move |_prev: Option<Option<IntervalGuard>>| -> Option<IntervalGuard> {
-        let video = video_sig.get()?;
-        let info = view_info.get().and_then(|r| r.ok())?;
-        let bv = bvid.get();
-        if info.bvid != bv {
-            return None; // stale view_info from the previous video
-        }
-        let aid = info.aid;
-        let cid = info.cid;
-        let duration = info.duration;
-
-        // play_type=1 = playback started. Fire once when the player first appears.
-        {
-            let bv0 = bv.clone();
-            spawn_local(async move {
-                if let Err(e) = api::report_heartbeat(&bv0, aid, cid, 0, duration, 1).await {
-                    web_sys::console::warn_1(&format!("heartbeat start: {e}").into());
-                }
-            });
-        }
-
-        let video_inner = video.clone();
-        let bv_inner = bv.clone();
-        let closure = Closure::<dyn FnMut()>::new(move || {
-            // Skip while paused — Bilibili's player does the same.
-            if video_inner.paused() {
-                return;
+    Effect::new(
+        move |_prev: Option<Option<IntervalGuard>>| -> Option<IntervalGuard> {
+            let video = video_sig.get()?;
+            let info = view_info.get().and_then(|r| r.ok())?;
+            let bv = bvid.get();
+            if info.bvid != bv {
+                return None; // stale view_info from the previous video
             }
-            let played = video_inner.current_time() as i64;
-            let bv = bv_inner.clone();
-            spawn_local(async move {
-                if let Err(e) =
-                    api::report_heartbeat(&bv, aid, cid, played, duration, 0).await
-                {
-                    web_sys::console::warn_1(&format!("heartbeat: {e}").into());
+            let aid = info.aid;
+            let cid = info.cid;
+            let duration = info.duration;
+
+            // play_type=1 = playback started. Fire once when the player first appears.
+            {
+                let bv0 = bv.clone();
+                spawn_local(async move {
+                    if let Err(e) = api::report_heartbeat(&bv0, aid, cid, 0, duration, 1).await {
+                        web_sys::console::warn_1(&format!("heartbeat start: {e}").into());
+                    }
+                });
+            }
+
+            let video_inner = video.clone();
+            let bv_inner = bv.clone();
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                // Skip while paused — Bilibili's player does the same.
+                if video_inner.paused() {
+                    return;
                 }
-            });
-        });
-
-        let win = web_sys::window()?;
-        let id = win
-            .set_interval_with_callback_and_timeout_and_arguments_0(
-                closure.as_ref().unchecked_ref(),
-                15_000,
-            )
-            .ok()?;
-
-        // Fire a heartbeat as soon as the user finishes a seek so the server's
-        // recorded position tracks the scrub bar instead of lagging by up to
-        // 15s. The browser only emits `seeked` once the new position is
-        // settled, so rapid scrubbing back and forth still yields one POST per
-        // settle, not one per pixel of drag.
-        let video_for_seek = video.clone();
-        let bv_for_seek = bv.clone();
-        let seek_closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_ev| {
-            let played = video_for_seek.current_time() as i64;
-            let bv = bv_for_seek.clone();
-            spawn_local(async move {
-                if let Err(e) =
-                    api::report_heartbeat(&bv, aid, cid, played, duration, 0).await
-                {
-                    web_sys::console::warn_1(&format!("heartbeat seek: {e}").into());
-                }
-            });
-        });
-        let seek_guard = video
-            .add_event_listener_with_callback(
-                "seeked",
-                seek_closure.as_ref().unchecked_ref(),
-            )
-            .ok()
-            .map(|_| SeekListenerGuard {
-                video: video.clone(),
-                closure: seek_closure,
+                let played = video_inner.current_time() as i64;
+                let bv = bv_inner.clone();
+                spawn_local(async move {
+                    if let Err(e) = api::report_heartbeat(&bv, aid, cid, played, duration, 0).await
+                    {
+                        web_sys::console::warn_1(&format!("heartbeat: {e}").into());
+                    }
+                });
             });
 
-        Some(IntervalGuard {
-            id,
-            _closure: closure,
-            _seek: seek_guard,
-        })
-    });
+            let win = web_sys::window()?;
+            let id = win
+                .set_interval_with_callback_and_timeout_and_arguments_0(
+                    closure.as_ref().unchecked_ref(),
+                    15_000,
+                )
+                .ok()?;
+
+            // Fire a heartbeat as soon as the user finishes a seek so the server's
+            // recorded position tracks the scrub bar instead of lagging by up to
+            // 15s. The browser only emits `seeked` once the new position is
+            // settled, so rapid scrubbing back and forth still yields one POST per
+            // settle, not one per pixel of drag.
+            let video_for_seek = video.clone();
+            let bv_for_seek = bv.clone();
+            let seek_closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_ev| {
+                let played = video_for_seek.current_time() as i64;
+                let bv = bv_for_seek.clone();
+                spawn_local(async move {
+                    if let Err(e) = api::report_heartbeat(&bv, aid, cid, played, duration, 0).await
+                    {
+                        web_sys::console::warn_1(&format!("heartbeat seek: {e}").into());
+                    }
+                });
+            });
+            let seek_guard = video
+                .add_event_listener_with_callback("seeked", seek_closure.as_ref().unchecked_ref())
+                .ok()
+                .map(|_| SeekListenerGuard {
+                    video: video.clone(),
+                    closure: seek_closure,
+                });
+
+            Some(IntervalGuard {
+                id,
+                _closure: closure,
+                _seek: seek_guard,
+            })
+        },
+    );
 
     // Global keyboard shortcuts for the watch page. Re-installs whenever the
     // <video> element appears (after the player mounts). The KeydownGuard's

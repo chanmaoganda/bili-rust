@@ -924,7 +924,11 @@ pub fn log_player_event(label: String, detail: String) {
         while !detail.is_char_boundary(end) && end > 0 {
             end -= 1;
         }
-        format!("{}…[truncated {} bytes]", &detail[..end], detail.len() - end)
+        format!(
+            "{}…[truncated {} bytes]",
+            &detail[..end],
+            detail.len() - end
+        )
     } else {
         detail
     };

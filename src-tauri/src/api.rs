@@ -144,9 +144,9 @@ impl Bili {
         let cookies = Cookies::from_raw(raw)?;
         let path = self.cookies_path.read().clone();
         if let Some(p) = path {
-            cookies.write_to(&p).with_context(|| {
-                format!("persist new cookies to {}", p.display())
-            })?;
+            cookies
+                .write_to(&p)
+                .with_context(|| format!("persist new cookies to {}", p.display()))?;
         }
         let session = Session::build(cookies)?;
         *self.session.write() = session;
@@ -245,7 +245,11 @@ impl Bili {
             .json()
             .await?;
         if v.code != 0 {
-            return Err(anyhow!("finger/spi failed: code={} msg={}", v.code, v.message));
+            return Err(anyhow!(
+                "finger/spi failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
         }
         let d = v.data.ok_or_else(|| anyhow!("finger/spi: no data"))?;
         Ok((d.b_3, d.b_4))
@@ -434,7 +438,11 @@ impl Bili {
             .json()
             .await?;
         if v.code != 0 {
-            return Err(anyhow!("comments failed: code={} msg={}", v.code, v.message));
+            return Err(anyhow!(
+                "comments failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
         }
         v.data.ok_or_else(|| anyhow!("comments: no data"))
     }
@@ -560,12 +568,7 @@ impl Bili {
 
     /// /x/relation/followings — list of users `vmid` follows. `pn` is 1-based,
     /// `ps` ≤ 50. Response wraps the list in `data.list`.
-    pub async fn followings(
-        &self,
-        vmid: i64,
-        pn: u32,
-        ps: u32,
-    ) -> Result<Vec<FollowingItem>> {
+    pub async fn followings(&self, vmid: i64, pn: u32, ps: u32) -> Result<Vec<FollowingItem>> {
         let url = "https://api.bilibili.com/x/relation/followings";
         let bytes = self
             .http()
@@ -580,13 +583,12 @@ impl Bili {
             .await?
             .bytes()
             .await?;
-        let v: ApiEnvelope<FollowingsRaw> =
-            serde_json::from_slice(&bytes).with_context(|| {
-                format!(
-                    "followings parse failed: body={}",
-                    String::from_utf8_lossy(&bytes)
-                )
-            })?;
+        let v: ApiEnvelope<FollowingsRaw> = serde_json::from_slice(&bytes).with_context(|| {
+            format!(
+                "followings parse failed: body={}",
+                String::from_utf8_lossy(&bytes)
+            )
+        })?;
         if v.code != 0 {
             tracing::warn!(
                 url,
@@ -660,7 +662,12 @@ impl Bili {
         form.insert("like", if like { "1" } else { "2" }.to_string());
         form.insert("csrf", csrf);
         archive_risk_fields(&mut form, bvid, &self.uid());
-        self.post_form("https://api.bilibili.com/x/web-interface/archive/like", form, "like_video").await
+        self.post_form(
+            "https://api.bilibili.com/x/web-interface/archive/like",
+            form,
+            "like_video",
+        )
+        .await
     }
 
     /// /x/web-interface/coin/add — coin a video. multiply ∈ {1, 2}.
@@ -673,7 +680,12 @@ impl Bili {
         form.insert("select_like", if with_like { "1" } else { "0" }.to_string());
         form.insert("csrf", csrf);
         archive_risk_fields(&mut form, bvid, &self.uid());
-        self.post_form("https://api.bilibili.com/x/web-interface/coin/add", form, "coin_video").await
+        self.post_form(
+            "https://api.bilibili.com/x/web-interface/coin/add",
+            form,
+            "coin_video",
+        )
+        .await
     }
 
     /// /x/web-interface/archive/like/triple — like + coin + favorite in one shot.
@@ -688,13 +700,12 @@ impl Bili {
         archive_risk_fields(&mut form, bvid, &self.uid());
         let resp = self.http().post(url).form(&form).send().await?;
         let bytes = resp.bytes().await?;
-        let v: ApiEnvelope<TripleRaw> =
-            serde_json::from_slice(&bytes).with_context(|| {
-                format!(
-                    "triple_video parse failed: body={}",
-                    String::from_utf8_lossy(&bytes)
-                )
-            })?;
+        let v: ApiEnvelope<TripleRaw> = serde_json::from_slice(&bytes).with_context(|| {
+            format!(
+                "triple_video parse failed: body={}",
+                String::from_utf8_lossy(&bytes)
+            )
+        })?;
         if v.code != 0 {
             tracing::warn!(
                 url,
@@ -735,7 +746,12 @@ impl Bili {
             format!(r#"{{"entity":"user","entity_id":{mid}}}"#),
         );
         form.insert("csrf", csrf);
-        self.post_form("https://api.bilibili.com/x/relation/modify", form, "relation_modify").await
+        self.post_form(
+            "https://api.bilibili.com/x/relation/modify",
+            form,
+            "relation_modify",
+        )
+        .await
     }
 
     async fn post_form(
@@ -832,7 +848,11 @@ impl Bili {
             .json()
             .await?;
         if v.code != 0 {
-            return Err(anyhow!("player_v2 failed: code={} msg={}", v.code, v.message));
+            return Err(anyhow!(
+                "player_v2 failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
         }
         Ok(v.data.unwrap_or_default())
     }
@@ -864,9 +884,7 @@ impl Bili {
                 info_v.message
             ));
         }
-        let info = info_v
-            .data
-            .ok_or_else(|| anyhow!("space_info: no data"))?;
+        let info = info_v.data.ok_or_else(|| anyhow!("space_info: no data"))?;
         let stat_v: ApiEnvelope<Value> = stat_resp?.json().await?;
         let (following, follower) = if stat_v.code == 0 {
             let d = stat_v.data.unwrap_or(Value::Null);
@@ -990,8 +1008,7 @@ impl Bili {
                 v.message
             ));
         }
-        v.data
-            .ok_or_else(|| anyhow!("history_cursor: no data"))
+        v.data.ok_or_else(|| anyhow!("history_cursor: no data"))
     }
 
     /// /x/v2/history/delete — remove one history entry. `kid` is the
