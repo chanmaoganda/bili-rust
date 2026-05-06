@@ -1,4 +1,5 @@
 use crate::components::header::Header;
+use crate::components::nav_shortcuts::NavShortcuts;
 use crate::routes::history::History;
 use crate::routes::home::Home;
 use crate::routes::login::Login;
@@ -18,6 +19,7 @@ pub fn App() -> impl IntoView {
     view! {
         <Router>
             <Header />
+            <NavShortcuts />
             <main>
                 <Routes fallback=|| view! { <div class="empty">"Not found"</div> }>
                     <Route path=path!("/") view=Home />

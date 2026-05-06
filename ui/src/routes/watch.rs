@@ -595,6 +595,14 @@ pub fn Watch() -> impl IntoView {
                         ev.prevent_default();
                         do_triple.run(());
                     }
+                    "q" | "Q" => {
+                        ev.prevent_default();
+                        do_like.run(());
+                    }
+                    "w" | "W" => {
+                        ev.prevent_default();
+                        do_coin.run((1u8, false));
+                    }
                     _ => {}
                 }
             })
