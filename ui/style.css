@@ -104,13 +104,35 @@ main { padding: 20px; max-width: 1600px; margin: 0 auto; }
   text-shadow: 1px 0 1px #000, 0 1px 1px #000, -1px 0 1px #000, 0 -1px 1px #000;
   will-change: transform; line-height: 1.2;
 }
-.dm-toggle {
+.dm-toggle, .dm-settings-btn {
   background: var(--panel); color: var(--text);
   border: 1px solid #2b303b; border-radius: 6px;
   padding: 6px 10px; font-size: 13px; cursor: pointer;
 }
-.dm-toggle:hover { border-color: var(--accent); color: var(--accent); }
-.dm-opacity { width: 90px; accent-color: var(--accent); }
+.dm-toggle:hover, .dm-settings-btn:hover { border-color: var(--accent); color: var(--accent); }
+.dm-settings-btn { padding: 6px 8px; }
+.dm-wrap { position: relative; display: inline-flex; align-items: center; gap: 6px; }
+.dm-settings-popover {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30;
+  background: var(--panel); border: 1px solid #2b303b; border-radius: 8px;
+  padding: 10px 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  display: flex; flex-direction: column; gap: 8px; min-width: 240px;
+  font-size: 13px; color: var(--text);
+}
+.dm-settings-popover .dm-row { display: flex; align-items: center; gap: 8px; }
+.dm-settings-popover .dm-label { color: var(--muted); width: 64px; flex-shrink: 0; }
+.dm-settings-popover input[type=range] { flex: 1; accent-color: var(--accent); }
+.dm-settings-popover .dm-num {
+  font-variant-numeric: tabular-nums; color: var(--muted); width: 44px; text-align: right;
+}
+.dm-settings-popover select {
+  flex: 1; background: var(--panel); color: var(--text);
+  border: 1px solid #2b303b; border-radius: 6px; padding: 3px 6px;
+}
+.dm-settings-popover .dm-modes { flex-wrap: wrap; }
+.dm-settings-popover .dm-modes label {
+  display: inline-flex; align-items: center; gap: 3px; cursor: pointer; color: var(--text);
+}
 .watch h1 { font-size: 18px; margin: 12px 0 8px; flex: 1; }
 .watch .up { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
 .watch .up img { width: 36px; height: 36px; border-radius: 50%; }

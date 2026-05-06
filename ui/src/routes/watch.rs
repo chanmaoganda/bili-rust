@@ -16,7 +16,25 @@ use leptos_router::components::A;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{Element, HtmlInputElement, HtmlSelectElement, HtmlVideoElement, KeyboardEvent};
+use web_sys::{
+    Element, HtmlInputElement, HtmlSelectElement, HtmlVideoElement, KeyboardEvent, MouseEvent,
+};
+
+/// Owns a document-level `mousedown` listener and removes it on drop. Used
+/// to close the danmaku settings popover when the user clicks outside it.
+struct DocMousedownGuard {
+    document: web_sys::Document,
+    closure: Closure<dyn FnMut(MouseEvent)>,
+}
+
+impl Drop for DocMousedownGuard {
+    fn drop(&mut self) {
+        let _ = self.document.remove_event_listener_with_callback(
+            "mousedown",
+            self.closure.as_ref().unchecked_ref(),
+        );
+    }
+}
 
 /// Wraps a `setInterval` ID + its closure so the interval is cleared when the
 /// guard is dropped (route unmount, bvid change, etc.). Optionally also owns a
@@ -174,7 +192,49 @@ pub fn Watch() -> impl IntoView {
     let shell_sig = RwSignal::<Option<Element>>::new(None);
     let dm_enabled = RwSignal::new(crate::prefs::get_danmaku_enabled());
     let dm_opacity = RwSignal::new(crate::prefs::get_danmaku_opacity());
+    let dm_area = RwSignal::new(crate::prefs::get_danmaku_area());
+    let dm_speed = RwSignal::new(crate::prefs::get_danmaku_speed());
+    let dm_show_scroll = RwSignal::new(crate::prefs::get_danmaku_show_scroll());
+    let dm_show_top = RwSignal::new(crate::prefs::get_danmaku_show_top());
+    let dm_show_bottom = RwSignal::new(crate::prefs::get_danmaku_show_bottom());
+    let dm_font_scale = RwSignal::new(crate::prefs::get_danmaku_font_scale());
+    let dm_density = RwSignal::new(crate::prefs::get_danmaku_density());
+    let dm_settings_open = RwSignal::new(false);
+    let dm_wrap_ref = NodeRef::<leptos::html::Div>::new();
     let stats_hud_enabled = RwSignal::new(crate::prefs::get_stats_hud_enabled());
+
+    // Close the danmaku settings popover on any mousedown outside `.dm-wrap`.
+    // The listener is only attached while the popover is open; the previous
+    // Effect run's guard is dropped when `dm_settings_open` flips to false,
+    // which removes the document listener.
+    Effect::new(
+        move |_prev: Option<Option<DocMousedownGuard>>| -> Option<DocMousedownGuard> {
+            if !dm_settings_open.get() {
+                return None;
+            }
+            let wrap = dm_wrap_ref.get()?;
+            let wrap_el: web_sys::Element = wrap.unchecked_into();
+            let document = web_sys::window()?.document()?;
+            let closure = Closure::<dyn FnMut(MouseEvent)>::new(move |ev: MouseEvent| {
+                let Some(target) = ev.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok())
+                else {
+                    return;
+                };
+                let wrap_node: &web_sys::Node = wrap_el.unchecked_ref();
+                if !wrap_node.contains(Some(&target)) {
+                    dm_settings_open.set(false);
+                }
+            });
+            document
+                .add_event_listener_with_callback(
+                    "mousedown",
+                    closure.as_ref().unchecked_ref(),
+                )
+                .ok()?;
+            Some(DocMousedownGuard { document, closure })
+        },
+    );
+
     let danmaku_cid = Signal::derive(move || {
         // Guard against stale PlayInfo during a bvid switch: LocalResource keeps
         // returning the previous Ok value while refetching, which would let the
@@ -675,6 +735,13 @@ pub fn Watch() -> impl IntoView {
                                         danmakus=dm_signal
                                         enabled=dm_enabled.into()
                                         opacity=dm_opacity.into()
+                                        area=dm_area.into()
+                                        speed=dm_speed.into()
+                                        show_scroll=dm_show_scroll.into()
+                                        show_top=dm_show_top.into()
+                                        show_bottom=dm_show_bottom.into()
+                                        font_scale=dm_font_scale.into()
+                                        density=dm_density.into()
                                     />
                                     {move || stats_hud_enabled.get().then(|| view! {
                                         <StatsHud video=video_sig info=info_for_hud.clone() />
@@ -682,16 +749,170 @@ pub fn Watch() -> impl IntoView {
                                 </div>
                                 <div class="player-bar">
                                     <h1>{title_view}</h1>
-                                    <button
-                                        class="dm-toggle"
-                                        on:click=move |_| {
-                                            let next = !dm_enabled.get();
-                                            crate::prefs::set_danmaku_enabled(next);
-                                            dm_enabled.set(next);
-                                        }
-                                    >
-                                        {move || if dm_enabled.get() { "弹幕 开" } else { "弹幕 关" }}
-                                    </button>
+                                    <div class="dm-wrap" node_ref=dm_wrap_ref>
+                                        <button
+                                            class="dm-toggle"
+                                            on:click=move |_| {
+                                                let next = !dm_enabled.get();
+                                                crate::prefs::set_danmaku_enabled(next);
+                                                dm_enabled.set(next);
+                                            }
+                                        >
+                                            {move || if dm_enabled.get() { "弹幕 开" } else { "弹幕 关" }}
+                                        </button>
+                                        <button
+                                            class="dm-settings-btn"
+                                            title="弹幕设置"
+                                            on:click=move |_| dm_settings_open.update(|v| *v = !*v)
+                                        >"⚙"</button>
+                                        {move || dm_settings_open.get().then(|| view! {
+                                            <div class="dm-settings-popover">
+                                                <div class="dm-row">
+                                                    <span class="dm-label">"不透明度"</span>
+                                                    <input
+                                                        type="range"
+                                                        min="0"
+                                                        max="1"
+                                                        step="0.05"
+                                                        prop:value=move || dm_opacity.get().to_string()
+                                                        on:input=move |ev| {
+                                                            if let Some(inp) = ev.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok()) {
+                                                                if let Ok(v) = inp.value().parse::<f64>() {
+                                                                    crate::prefs::set_danmaku_opacity(v);
+                                                                    dm_opacity.set(v);
+                                                                }
+                                                            }
+                                                        }
+                                                    />
+                                                    <span class="dm-num">{move || format!("{:.2}", dm_opacity.get())}</span>
+                                                </div>
+                                                <div class="dm-row">
+                                                    <span class="dm-label">"显示区域"</span>
+                                                    <select
+                                                        on:change=move |ev| {
+                                                            if let Some(sel) = ev.target().and_then(|t| t.dyn_into::<HtmlSelectElement>().ok()) {
+                                                                if let Ok(v) = sel.value().parse::<f64>() {
+                                                                    crate::prefs::set_danmaku_area(v);
+                                                                    dm_area.set(v);
+                                                                }
+                                                            }
+                                                        }
+                                                    >
+                                                        {[(0.25_f64, "1/4 屏"), (0.5, "半屏"), (0.75, "3/4 屏"), (1.0, "全屏")]
+                                                            .into_iter()
+                                                            .map(|(v, label)| {
+                                                                let selected = (dm_area.get_untracked() - v).abs() < 1e-3;
+                                                                view! { <option value=v.to_string() selected=selected>{label}</option> }
+                                                            })
+                                                            .collect_view()}
+                                                    </select>
+                                                </div>
+                                                <div class="dm-row">
+                                                    <span class="dm-label">"速度"</span>
+                                                    <select
+                                                        on:change=move |ev| {
+                                                            if let Some(sel) = ev.target().and_then(|t| t.dyn_into::<HtmlSelectElement>().ok()) {
+                                                                if let Ok(v) = sel.value().parse::<f64>() {
+                                                                    crate::prefs::set_danmaku_speed(v);
+                                                                    dm_speed.set(v);
+                                                                }
+                                                            }
+                                                        }
+                                                    >
+                                                        {[(0.5_f64, "0.5x"), (1.0, "1.0x"), (1.5, "1.5x"), (2.0, "2.0x")]
+                                                            .into_iter()
+                                                            .map(|(v, label)| {
+                                                                let selected = (dm_speed.get_untracked() - v).abs() < 1e-3;
+                                                                view! { <option value=v.to_string() selected=selected>{label}</option> }
+                                                            })
+                                                            .collect_view()}
+                                                    </select>
+                                                </div>
+                                                <div class="dm-row">
+                                                    <span class="dm-label">"密度上限"</span>
+                                                    <select
+                                                        on:change=move |ev| {
+                                                            if let Some(sel) = ev.target().and_then(|t| t.dyn_into::<HtmlSelectElement>().ok()) {
+                                                                if let Ok(v) = sel.value().parse::<u32>() {
+                                                                    crate::prefs::set_danmaku_density(v);
+                                                                    dm_density.set(v);
+                                                                }
+                                                            }
+                                                        }
+                                                    >
+                                                        {[(0_u32, "无限制"), (20, "稀疏"), (50, "中等"), (100, "密集")]
+                                                            .into_iter()
+                                                            .map(|(v, label)| {
+                                                                let selected = dm_density.get_untracked() == v;
+                                                                view! { <option value=v.to_string() selected=selected>{label}</option> }
+                                                            })
+                                                            .collect_view()}
+                                                    </select>
+                                                </div>
+                                                <div class="dm-row">
+                                                    <span class="dm-label">"字号"</span>
+                                                    <input
+                                                        type="range"
+                                                        min="0.75"
+                                                        max="1.5"
+                                                        step="0.05"
+                                                        prop:value=move || dm_font_scale.get().to_string()
+                                                        on:input=move |ev| {
+                                                            if let Some(inp) = ev.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok()) {
+                                                                if let Ok(v) = inp.value().parse::<f64>() {
+                                                                    crate::prefs::set_danmaku_font_scale(v);
+                                                                    dm_font_scale.set(v);
+                                                                }
+                                                            }
+                                                        }
+                                                    />
+                                                    <span class="dm-num">{move || format!("{:.2}x", dm_font_scale.get())}</span>
+                                                </div>
+                                                <div class="dm-row dm-modes">
+                                                    <span class="dm-label">"类型"</span>
+                                                    <label>
+                                                        <input
+                                                            type="checkbox"
+                                                            prop:checked=move || dm_show_scroll.get()
+                                                            on:change=move |ev| {
+                                                                if let Some(inp) = ev.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok()) {
+                                                                    crate::prefs::set_danmaku_show_scroll(inp.checked());
+                                                                    dm_show_scroll.set(inp.checked());
+                                                                }
+                                                            }
+                                                        />
+                                                        " 滚动"
+                                                    </label>
+                                                    <label>
+                                                        <input
+                                                            type="checkbox"
+                                                            prop:checked=move || dm_show_top.get()
+                                                            on:change=move |ev| {
+                                                                if let Some(inp) = ev.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok()) {
+                                                                    crate::prefs::set_danmaku_show_top(inp.checked());
+                                                                    dm_show_top.set(inp.checked());
+                                                                }
+                                                            }
+                                                        />
+                                                        " 顶部"
+                                                    </label>
+                                                    <label>
+                                                        <input
+                                                            type="checkbox"
+                                                            prop:checked=move || dm_show_bottom.get()
+                                                            on:change=move |ev| {
+                                                                if let Some(inp) = ev.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok()) {
+                                                                    crate::prefs::set_danmaku_show_bottom(inp.checked());
+                                                                    dm_show_bottom.set(inp.checked());
+                                                                }
+                                                            }
+                                                        />
+                                                        " 底部"
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        })}
+                                    </div>
                                     <button
                                         class="stats-toggle"
                                         title="解码诊断面板"
@@ -703,22 +924,6 @@ pub fn Watch() -> impl IntoView {
                                     >
                                         {move || if stats_hud_enabled.get() { "Stats 开" } else { "Stats 关" }}
                                     </button>
-                                    <input
-                                        class="dm-opacity"
-                                        type="range"
-                                        min="0.2"
-                                        max="1"
-                                        step="0.05"
-                                        prop:value=move || dm_opacity.get().to_string()
-                                        on:input=move |ev| {
-                                            if let Some(inp) = ev.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok()) {
-                                                if let Ok(v) = inp.value().parse::<f64>() {
-                                                    crate::prefs::set_danmaku_opacity(v);
-                                                    dm_opacity.set(v);
-                                                }
-                                            }
-                                        }
-                                    />
                                     {(!qualities.is_empty()).then(|| view! {
                                         <select
                                             class="quality"
