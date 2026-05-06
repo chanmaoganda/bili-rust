@@ -725,8 +725,9 @@ impl Bili {
     }
 
     /// /x/relation/followings — list of users `vmid` follows. `pn` is 1-based,
-    /// `ps` ≤ 50. Response wraps the list in `data.list`.
-    pub async fn followings(&self, vmid: i64, pn: u32, ps: u32) -> Result<Vec<FollowingItem>> {
+    /// `ps` ≤ 50. Response wraps the list in `data.list` and the grand total
+    /// in `data.total`.
+    pub async fn followings(&self, vmid: i64, pn: u32, ps: u32) -> Result<FollowingsPage> {
         let url = "https://api.bilibili.com/x/relation/followings";
         let bytes = self
             .http()
@@ -762,7 +763,11 @@ impl Bili {
                 v.message
             ));
         }
-        Ok(v.data.unwrap_or_default().list)
+        let raw = v.data.unwrap_or_default();
+        Ok(FollowingsPage {
+            list: raw.list,
+            total: raw.total,
+        })
     }
 
     /// /x/relation/tag — followings within a specific tag. `tag_id = -10` is
@@ -1508,6 +1513,13 @@ struct UserRelationRaw {
 struct FollowingsRaw {
     #[serde(default)]
     list: Vec<FollowingItem>,
+    #[serde(default)]
+    total: i64,
+}
+
+pub struct FollowingsPage {
+    pub list: Vec<FollowingItem>,
+    pub total: i64,
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
@@ -1516,6 +1528,12 @@ pub struct FollowingItem {
     pub mid: i64,
     #[serde(default)]
     pub uname: String,
+    #[serde(default)]
+    pub face: String,
+    #[serde(default)]
+    pub sign: String,
+    #[serde(default)]
+    pub mtime: i64,
     #[serde(default)]
     pub attribute: i64,
     #[serde(default)]

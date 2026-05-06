@@ -48,7 +48,8 @@ pub fn NavShortcuts() -> impl IntoView {
                                 "/login".to_string()
                             })
                         }
-                        "5" => Some("/login".to_string()),
+                        "5" => Some("/followees".to_string()),
+                        "6" => Some("/login".to_string()),
                         _ => None,
                     };
                     if let Some(p) = path {

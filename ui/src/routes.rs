@@ -1,3 +1,4 @@
+pub mod followees;
 pub mod history;
 pub mod home;
 pub mod login;
