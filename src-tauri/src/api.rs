@@ -524,7 +524,12 @@ impl Bili {
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.parse().ok())
             })
-            .unwrap_or(0);
+            .ok_or_else(|| {
+                anyhow!(
+                    "send_danmaku: missing dmid in response body={}",
+                    String::from_utf8_lossy(&bytes)
+                )
+            })?;
         tracing::info!(cid, dmid, mode, "send_danmaku ok");
         Ok(dmid)
     }
@@ -549,7 +554,6 @@ impl Bili {
         form.insert("type", "1".to_string());
         form.insert("message", message.to_string());
         form.insert("plat", "1".to_string());
-        form.insert("ordering", "heat".to_string());
         if let Some(r) = root {
             form.insert("root", r.to_string());
         }
@@ -591,7 +595,12 @@ impl Bili {
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.parse().ok())
             })
-            .unwrap_or(0);
+            .ok_or_else(|| {
+                anyhow!(
+                    "reply_add: missing rpid in response body={}",
+                    String::from_utf8_lossy(&bytes)
+                )
+            })?;
         tracing::info!(oid, rpid, "reply_add ok");
         Ok(rpid)
     }

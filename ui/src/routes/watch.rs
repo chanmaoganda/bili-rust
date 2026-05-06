@@ -9,6 +9,7 @@ use crate::components::player::Player;
 use crate::components::stats_hud::StatsHud;
 use crate::components::video_card::VideoCardView;
 use crate::keys::{is_typing, KeydownGuard};
+use crate::state::LoginVersion;
 use crate::types::{fmt_ctime, fmt_views, ActionState, VideoCard};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -78,6 +79,23 @@ pub fn Watch() -> impl IntoView {
 
     let qn = RwSignal::new(crate::prefs::get_preferred_qn());
     let resume_at = RwSignal::new(0.0_f64);
+
+    // Login state — gates the inline danmaku composer. Tracking LoginVersion
+    // so a successful in-app QR login flips it on without an app restart.
+    let login_version = use_context::<LoginVersion>();
+    let me_resource = LocalResource::new(move || {
+        if let Some(v) = login_version {
+            let _ = v.get();
+        }
+        async { api::get_user_info().await.ok() }
+    });
+    let logged_in = Memo::new(move |_| {
+        me_resource
+            .get()
+            .and_then(|u| u)
+            .map(|u| u.is_login)
+            .unwrap_or(false)
+    });
     // Gate: false until we've either (a) honored an explicit `?t=` URL param,
     // (b) fetched the per-video saved position from /x/player/wbi/v2 and
     // optionally seeded resume_at from it, or (c) given up because no cid is
@@ -718,6 +736,9 @@ pub fn Watch() -> impl IntoView {
                             let send_cid = info.cid;
                             let send_text = RwSignal::new(String::new());
                             let send_pending = RwSignal::new(false);
+                            // Generation counter: each successful send bumps it so older
+                            // auto-clear timers no-op when a newer send has happened.
+                            let send_gen = RwSignal::new(0u32);
                             let send_status = RwSignal::new(None::<(bool, String)>);
                             let do_send = StoredValue::new_local(move || {
                                 if send_pending.get_untracked() {
@@ -754,6 +775,14 @@ pub fn Watch() -> impl IntoView {
                                         Ok(_) => {
                                             send_text.set(String::new());
                                             send_status.set(Some((true, "已发送".into())));
+                                            send_gen.update(|g| *g += 1);
+                                            let gen_now = send_gen.get_untracked();
+                                            spawn_local(async move {
+                                                gloo_timers::future::TimeoutFuture::new(2000).await;
+                                                if send_gen.get_untracked() == gen_now {
+                                                    send_status.set(None);
+                                                }
+                                            });
                                         }
                                         Err(e) => send_status.set(Some((false, e))),
                                     }
@@ -795,34 +824,43 @@ pub fn Watch() -> impl IntoView {
                                 </div>
                                 <div class="player-bar">
                                     <h1>{title_view}</h1>
-                                    <input
-                                        class="dm-send-inline"
-                                        type="text"
-                                        placeholder="发条弹幕…"
-                                        prop:value=move || send_text.get()
-                                        title=move || match send_status.get() {
-                                            Some((true, s)) | Some((false, s)) => s,
-                                            None => "回车发送".to_string(),
-                                        }
-                                        on:input=move |ev| {
-                                            if let Some(inp) = ev
-                                                .target()
-                                                .and_then(|t| t.dyn_into::<HtmlInputElement>().ok())
-                                            {
-                                                send_text.set(inp.value());
+                                    {move || logged_in.get().then(|| view! {
+                                        <input
+                                            class="dm-send-inline"
+                                            type="text"
+                                            placeholder="发条弹幕…"
+                                            prop:value=move || send_text.get()
+                                            title=move || match send_status.get() {
+                                                Some((true, s)) | Some((false, s)) => s,
+                                                None => "回车发送".to_string(),
                                             }
-                                        }
-                                        on:keydown=move |ev: KeyboardEvent| {
-                                            if ev.key() == "Enter" {
-                                                ev.prevent_default();
-                                                do_send.with_value(|f| f());
+                                            on:input=move |ev| {
+                                                if let Some(inp) = ev
+                                                    .target()
+                                                    .and_then(|t| t.dyn_into::<HtmlInputElement>().ok())
+                                                {
+                                                    send_text.set(inp.value());
+                                                }
+                                                // Clear stale ok/err feedback as soon as the user
+                                                // starts a new bullet — invalidates any pending
+                                                // 2s auto-clear timer via the gen counter too.
+                                                if send_status.get_untracked().is_some() {
+                                                    send_gen.update(|g| *g += 1);
+                                                    send_status.set(None);
+                                                }
                                             }
-                                        }
-                                        class:is-sending=move || send_pending.get()
-                                        class:is-ok=move || matches!(send_status.get(), Some((true, _)))
-                                        class:is-err=move || matches!(send_status.get(), Some((false, _)))
-                                        prop:disabled=move || send_pending.get()
-                                    />
+                                            on:keydown=move |ev: KeyboardEvent| {
+                                                if ev.key() == "Enter" {
+                                                    ev.prevent_default();
+                                                    do_send.with_value(|f| f());
+                                                }
+                                            }
+                                            class:is-sending=move || send_pending.get()
+                                            class:is-ok=move || matches!(send_status.get(), Some((true, _)))
+                                            class:is-err=move || matches!(send_status.get(), Some((false, _)))
+                                            prop:disabled=move || send_pending.get()
+                                        />
+                                    })}
                                     <div class="dm-wrap" node_ref=dm_wrap_ref>
                                         <button
                                             class="dm-toggle"

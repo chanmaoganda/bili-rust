@@ -237,6 +237,11 @@ main { padding: 20px; max-width: 1600px; margin: 0 auto; }
   background: var(--panel); border: 1px solid #2b303b; border-radius: 8px;
 }
 .comment-replies .comment-composer { margin: 8px 0 0; padding: 8px; }
+.comment-composer-signin {
+  flex-direction: row; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 13px; padding: 10px 12px;
+}
+.comment-composer-signin .login-link { color: var(--accent); }
 .comment-input {
   width: 100%; min-height: 64px; resize: vertical;
   background: #0f1218; color: var(--text);

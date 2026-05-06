@@ -1,4 +1,5 @@
 use crate::api;
+use crate::state::LoginVersion;
 use crate::types::{fmt_ctime, Comment, CommentMember, UserInfo};
 use leptos::prelude::*;
 use leptos_router::components::A;
@@ -10,6 +11,9 @@ pub fn Comments(
     #[prop(into)] bvid: Signal<String>,
     #[prop(into)] aid: Signal<i64>,
 ) -> impl IntoView {
+    // Track LoginVersion so a successful in-app QR login flips the composer on
+    // without an app restart.
+    let login_version = use_context::<LoginVersion>();
     let items = RwSignal::new(Vec::<Comment>::new());
     let pn = RwSignal::new(1u32);
     let total = RwSignal::new(0i64);
@@ -18,11 +22,20 @@ pub fn Comments(
     let end_reached = RwSignal::new(false);
     let attempted = RwSignal::new(false);
 
-    // Current-user lookup for the optimistic local Comment we prepend after
-    // a successful post. We don't gate posting on this — the post uses the
-    // server-side cookies — but if the lookup hasn't resolved yet we just
-    // skip the optimistic insert and fall back to a refresh.
-    let me = LocalResource::new(|| async { api::get_user_info().await.ok() });
+    // Current-user lookup, also used to gate the composer on login state.
+    // Tracking LoginVersion forces a refetch after the in-app QR login flow.
+    let me = LocalResource::new(move || {
+        if let Some(v) = login_version {
+            let _ = v.get();
+        }
+        async { api::get_user_info().await.ok() }
+    });
+    let logged_in = Memo::new(move |_| {
+        me.get()
+            .and_then(|u| u)
+            .map(|u| u.is_login)
+            .unwrap_or(false)
+    });
 
     // StoredValue::new_local lets us reuse the non-Send closure across reactive
     // contexts. Same pattern as routes/home.rs.
@@ -93,14 +106,25 @@ pub fn Comments(
                 let t = total.get();
                 if t > 0 { format!("评论 {t}") } else { "评论".to_string() }
             }}</h2>
-            <Composer
-                aid=aid
-                root=None
-                parent=None
-                me=me
-                placeholder="发条友善的评论吧"
-                on_posted=Callback::new(move |c| on_posted_top(c))
-            />
+            {move || if logged_in.get() {
+                view! {
+                    <Composer
+                        aid=aid
+                        root=None
+                        parent=None
+                        me=me
+                        placeholder="发条友善的评论吧"
+                        on_posted=Callback::new(move |c| on_posted_top(c))
+                    />
+                }.into_any()
+            } else {
+                view! {
+                    <div class="comment-composer comment-composer-signin">
+                        <A href="/login"><span class="login-link">"登录"</span></A>
+                        " 后参与评论"
+                    </div>
+                }.into_any()
+            }}
             <For
                 each=move || items.get()
                 key=|c: &Comment| c.rpid
@@ -109,6 +133,7 @@ pub fn Comments(
                         c=c.clone()
                         aid=aid
                         me=me
+                        logged_in=Signal::derive(move || logged_in.get())
                         on_reply_posted=Callback::new(move |new_c: Comment| on_posted_reply(c.rpid, new_c))
                     />
                 }
@@ -276,6 +301,7 @@ fn CommentItem(
     c: Comment,
     #[prop(into)] aid: Signal<i64>,
     me: LocalResource<Option<UserInfo>>,
+    #[prop(into)] logged_in: Signal<bool>,
     on_reply_posted: Callback<Comment>,
 ) -> impl IntoView {
     let Comment {
@@ -315,12 +341,14 @@ fn CommentItem(
                 <div class="comment-message">{message}</div>
                 <div class="comment-meta">
                     {meta}
-                    <button
-                        class="comment-reply-btn"
-                        on:click=move |_| reply_open.update(|v| *v = !*v)
-                    >
-                        {move || if reply_open.get() { "取消" } else { "回复" }}
-                    </button>
+                    {move || logged_in.get().then(|| view! {
+                        <button
+                            class="comment-reply-btn"
+                            on:click=move |_| reply_open.update(|v| *v = !*v)
+                        >
+                            {move || if reply_open.get() { "取消" } else { "回复" }}
+                        </button>
+                    })}
                 </div>
                 {has_replies.then(|| view! {
                     <div class="comment-replies">
