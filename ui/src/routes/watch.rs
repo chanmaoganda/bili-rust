@@ -16,7 +16,25 @@ use leptos_router::components::A;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{Element, HtmlInputElement, HtmlSelectElement, HtmlVideoElement, KeyboardEvent};
+use web_sys::{
+    Element, HtmlInputElement, HtmlSelectElement, HtmlVideoElement, KeyboardEvent, MouseEvent,
+};
+
+/// Owns a document-level `mousedown` listener and removes it on drop. Used
+/// to close the danmaku settings popover when the user clicks outside it.
+struct DocMousedownGuard {
+    document: web_sys::Document,
+    closure: Closure<dyn FnMut(MouseEvent)>,
+}
+
+impl Drop for DocMousedownGuard {
+    fn drop(&mut self) {
+        let _ = self.document.remove_event_listener_with_callback(
+            "mousedown",
+            self.closure.as_ref().unchecked_ref(),
+        );
+    }
+}
 
 /// Wraps a `setInterval` ID + its closure so the interval is cleared when the
 /// guard is dropped (route unmount, bvid change, etc.). Optionally also owns a
@@ -182,7 +200,41 @@ pub fn Watch() -> impl IntoView {
     let dm_font_scale = RwSignal::new(crate::prefs::get_danmaku_font_scale());
     let dm_density = RwSignal::new(crate::prefs::get_danmaku_density());
     let dm_settings_open = RwSignal::new(false);
+    let dm_wrap_ref = NodeRef::<leptos::html::Div>::new();
     let stats_hud_enabled = RwSignal::new(crate::prefs::get_stats_hud_enabled());
+
+    // Close the danmaku settings popover on any mousedown outside `.dm-wrap`.
+    // The listener is only attached while the popover is open; the previous
+    // Effect run's guard is dropped when `dm_settings_open` flips to false,
+    // which removes the document listener.
+    Effect::new(
+        move |_prev: Option<Option<DocMousedownGuard>>| -> Option<DocMousedownGuard> {
+            if !dm_settings_open.get() {
+                return None;
+            }
+            let wrap = dm_wrap_ref.get()?;
+            let wrap_el: web_sys::Element = wrap.unchecked_into();
+            let document = web_sys::window()?.document()?;
+            let closure = Closure::<dyn FnMut(MouseEvent)>::new(move |ev: MouseEvent| {
+                let Some(target) = ev.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok())
+                else {
+                    return;
+                };
+                let wrap_node: &web_sys::Node = wrap_el.unchecked_ref();
+                if !wrap_node.contains(Some(&target)) {
+                    dm_settings_open.set(false);
+                }
+            });
+            document
+                .add_event_listener_with_callback(
+                    "mousedown",
+                    closure.as_ref().unchecked_ref(),
+                )
+                .ok()?;
+            Some(DocMousedownGuard { document, closure })
+        },
+    );
+
     let danmaku_cid = Signal::derive(move || {
         // Guard against stale PlayInfo during a bvid switch: LocalResource keeps
         // returning the previous Ok value while refetching, which would let the
@@ -697,7 +749,7 @@ pub fn Watch() -> impl IntoView {
                                 </div>
                                 <div class="player-bar">
                                     <h1>{title_view}</h1>
-                                    <div class="dm-wrap">
+                                    <div class="dm-wrap" node_ref=dm_wrap_ref>
                                         <button
                                             class="dm-toggle"
                                             on:click=move |_| {
