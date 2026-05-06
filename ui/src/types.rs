@@ -190,6 +190,16 @@ pub struct TripleResult {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct PostedComment {
+    pub rpid: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct PostedDanmaku {
+    pub dmid: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct CommentPage {
     pub page: u32,
     pub size: u32,

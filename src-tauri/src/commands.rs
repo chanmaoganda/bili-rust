@@ -726,6 +726,65 @@ pub async fn qr_login_poll(state: BiliState<'_>, qrcode_key: String) -> Result<Q
     Ok(QrPoll { status: label })
 }
 
+#[derive(Serialize)]
+pub struct PostedComment {
+    pub rpid: i64,
+}
+
+#[derive(Serialize)]
+pub struct PostedDanmaku {
+    pub dmid: i64,
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn send_danmaku(
+    state: BiliState<'_>,
+    bvid: String,
+    aid: i64,
+    cid: i64,
+    msg: String,
+    progress_ms: i64,
+    mode: u8,
+    color: u32,
+    fontsize: u8,
+) -> Result<PostedDanmaku, String> {
+    let trimmed = msg.trim();
+    if trimmed.is_empty() {
+        return Err("弹幕内容不能为空".to_string());
+    }
+    if trimmed.chars().count() > 100 {
+        return Err("弹幕过长（最多 100 字）".to_string());
+    }
+    let dmid = state
+        .send_danmaku(aid, cid, &bvid, trimmed, progress_ms, mode, color, fontsize)
+        .await
+        .map_err(err)?;
+    Ok(PostedDanmaku { dmid })
+}
+
+/// Post a top-level comment when `root` and `parent` are omitted; pass both
+/// to reply to an existing comment (`root` = the top-level rpid, `parent` =
+/// the immediate rpid being replied to — equal for direct replies).
+#[tauri::command]
+pub async fn post_comment(
+    state: BiliState<'_>,
+    aid: i64,
+    message: String,
+    root: Option<i64>,
+    parent: Option<i64>,
+) -> Result<PostedComment, String> {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return Err("评论内容不能为空".to_string());
+    }
+    let rpid = state
+        .reply_add(aid, trimmed, root, parent)
+        .await
+        .map_err(err)?;
+    Ok(PostedComment { rpid })
+}
+
 #[tauri::command]
 pub async fn get_comments(
     state: BiliState<'_>,

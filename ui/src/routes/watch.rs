@@ -714,6 +714,52 @@ pub fn Watch() -> impl IntoView {
                             let current = info.current_quality;
                             let start = resume_at.get_untracked();
                             let info_for_hud = info.clone();
+                            let send_bvid = info.bvid.clone();
+                            let send_cid = info.cid;
+                            let send_text = RwSignal::new(String::new());
+                            let send_pending = RwSignal::new(false);
+                            let send_status = RwSignal::new(None::<(bool, String)>);
+                            let do_send = StoredValue::new_local(move || {
+                                if send_pending.get_untracked() {
+                                    return;
+                                }
+                                let msg = send_text.get_untracked().trim().to_string();
+                                if msg.is_empty() {
+                                    return;
+                                }
+                                let bv = send_bvid.clone();
+                                let aid_now = view_info
+                                    .get_untracked()
+                                    .and_then(|r| r.ok())
+                                    .map(|v| v.aid)
+                                    .unwrap_or(0);
+                                let cid_now = send_cid;
+                                let progress_ms = video_sig
+                                    .get_untracked()
+                                    .map(|v| (v.current_time() * 1000.0) as i64)
+                                    .unwrap_or(0)
+                                    .max(0);
+                                if aid_now == 0 || cid_now == 0 {
+                                    send_status.set(Some((false, "视频信息未加载".into())));
+                                    return;
+                                }
+                                send_pending.set(true);
+                                send_status.set(None);
+                                spawn_local(async move {
+                                    match api::send_danmaku(
+                                        &bv, aid_now, cid_now, &msg, progress_ms, 1, 0xFFFFFF, 25,
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            send_text.set(String::new());
+                                            send_status.set(Some((true, "已发送".into())));
+                                        }
+                                        Err(e) => send_status.set(Some((false, e))),
+                                    }
+                                    send_pending.set(false);
+                                });
+                            });
                             let shell_ref = NodeRef::<leptos::html::Div>::new();
                             Effect::new(move |_| {
                                 if let Some(el) = shell_ref.get() {
@@ -749,6 +795,34 @@ pub fn Watch() -> impl IntoView {
                                 </div>
                                 <div class="player-bar">
                                     <h1>{title_view}</h1>
+                                    <input
+                                        class="dm-send-inline"
+                                        type="text"
+                                        placeholder="发条弹幕…"
+                                        prop:value=move || send_text.get()
+                                        title=move || match send_status.get() {
+                                            Some((true, s)) | Some((false, s)) => s,
+                                            None => "回车发送".to_string(),
+                                        }
+                                        on:input=move |ev| {
+                                            if let Some(inp) = ev
+                                                .target()
+                                                .and_then(|t| t.dyn_into::<HtmlInputElement>().ok())
+                                            {
+                                                send_text.set(inp.value());
+                                            }
+                                        }
+                                        on:keydown=move |ev: KeyboardEvent| {
+                                            if ev.key() == "Enter" {
+                                                ev.prevent_default();
+                                                do_send.with_value(|f| f());
+                                            }
+                                        }
+                                        class:is-sending=move || send_pending.get()
+                                        class:is-ok=move || matches!(send_status.get(), Some((true, _)))
+                                        class:is-err=move || matches!(send_status.get(), Some((false, _)))
+                                        prop:disabled=move || send_pending.get()
+                                    />
                                     <div class="dm-wrap" node_ref=dm_wrap_ref>
                                         <button
                                             class="dm-toggle"
@@ -1089,7 +1163,16 @@ pub fn Watch() -> impl IntoView {
                     }
                     }
                 }}
-                <Comments bvid=bvid />
+                <Comments
+                    bvid=bvid
+                    aid=Signal::derive(move || {
+                        view_info
+                            .get()
+                            .and_then(|r| r.ok())
+                            .map(|v| v.aid)
+                            .unwrap_or(0)
+                    })
+                />
             </div>
             <aside class="related">
                 {move || match related.get() {

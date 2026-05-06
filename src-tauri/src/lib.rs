@@ -80,6 +80,8 @@ pub fn run() {
             commands::get_view_info,
             commands::get_danmaku,
             commands::get_comments,
+            commands::post_comment,
+            commands::send_danmaku,
             commands::get_action_state,
             commands::like_video,
             commands::coin_video,

@@ -447,6 +447,155 @@ impl Bili {
         v.data.ok_or_else(|| anyhow!("comments: no data"))
     }
 
+    /// /x/v2/dm/post — post a danmaku at `progress_ms` into the video.
+    /// `mode`: 1 = scroll, 4 = bottom, 5 = top. `color` is decimal RGB
+    /// (0xFFFFFF = white). `fontsize`: 25 = standard, 18 = small, 36 = large.
+    /// Returns the new `dmid` on success.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_danmaku(
+        &self,
+        aid: i64,
+        cid: i64,
+        bvid: &str,
+        msg: &str,
+        progress_ms: i64,
+        mode: u8,
+        color: u32,
+        fontsize: u8,
+    ) -> Result<i64> {
+        let csrf = self.session().cookies.csrf.clone();
+        if csrf.is_empty() {
+            return Err(anyhow!("send_danmaku: not logged in (no csrf)"));
+        }
+        let rnd = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut form = BTreeMap::new();
+        form.insert("type", "1".to_string());
+        form.insert("aid", aid.to_string());
+        form.insert("oid", cid.to_string());
+        form.insert("bvid", bvid.to_string());
+        form.insert("msg", msg.to_string());
+        form.insert("progress", progress_ms.to_string());
+        form.insert("mode", mode.to_string());
+        form.insert("color", color.to_string());
+        form.insert("fontsize", fontsize.to_string());
+        form.insert("pool", "0".to_string());
+        form.insert("plat", "1".to_string());
+        form.insert("rnd", rnd.to_string());
+        form.insert("csrf", csrf);
+
+        let url = "https://api.bilibili.com/x/v2/dm/post";
+        let resp = self.http().post(url).form(&form).send().await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        let v: ApiEnvelope<Value> = serde_json::from_slice(&bytes).with_context(|| {
+            format!(
+                "send_danmaku parse failed: status={status} body={}",
+                String::from_utf8_lossy(&bytes)
+            )
+        })?;
+        if v.code != 0 {
+            tracing::warn!(
+                url,
+                cid,
+                mode,
+                code = v.code,
+                msg = %v.message,
+                body = %String::from_utf8_lossy(&bytes),
+                "send_danmaku non-zero code"
+            );
+            return Err(anyhow!(
+                "send_danmaku failed: code={} msg={}",
+                v.code,
+                v.message
+            ));
+        }
+        let dmid = v
+            .data
+            .as_ref()
+            .and_then(|d| d.get("dmid"))
+            .and_then(|v| v.as_i64())
+            .or_else(|| {
+                v.data
+                    .as_ref()
+                    .and_then(|d| d.get("dmid_str"))
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse().ok())
+            })
+            .unwrap_or(0);
+        tracing::info!(cid, dmid, mode, "send_danmaku ok");
+        Ok(dmid)
+    }
+
+    /// /x/v2/reply/add — post a top-level comment (when `root`/`parent` are
+    /// `None`) or a reply (set `root` to the top-level rpid and `parent` to the
+    /// rpid being replied to; for direct replies they're the same value).
+    /// Returns the new `rpid` on success.
+    pub async fn reply_add(
+        &self,
+        oid: i64,
+        message: &str,
+        root: Option<i64>,
+        parent: Option<i64>,
+    ) -> Result<i64> {
+        let csrf = self.session().cookies.csrf.clone();
+        if csrf.is_empty() {
+            return Err(anyhow!("reply_add: not logged in (no csrf)"));
+        }
+        let mut form = BTreeMap::new();
+        form.insert("oid", oid.to_string());
+        form.insert("type", "1".to_string());
+        form.insert("message", message.to_string());
+        form.insert("plat", "1".to_string());
+        form.insert("ordering", "heat".to_string());
+        if let Some(r) = root {
+            form.insert("root", r.to_string());
+        }
+        if let Some(p) = parent {
+            form.insert("parent", p.to_string());
+        }
+        form.insert("csrf", csrf);
+
+        let url = "https://api.bilibili.com/x/v2/reply/add";
+        let resp = self.http().post(url).form(&form).send().await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        let v: ApiEnvelope<Value> = serde_json::from_slice(&bytes).with_context(|| {
+            format!(
+                "reply_add parse failed: status={status} body={}",
+                String::from_utf8_lossy(&bytes)
+            )
+        })?;
+        if v.code != 0 {
+            tracing::warn!(
+                url,
+                oid,
+                code = v.code,
+                msg = %v.message,
+                body = %String::from_utf8_lossy(&bytes),
+                "reply_add non-zero code"
+            );
+            return Err(anyhow!("reply_add failed: code={} msg={}", v.code, v.message));
+        }
+        let rpid = v
+            .data
+            .as_ref()
+            .and_then(|d| d.get("rpid"))
+            .and_then(|v| v.as_i64())
+            .or_else(|| {
+                v.data
+                    .as_ref()
+                    .and_then(|d| d.get("rpid_str"))
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse().ok())
+            })
+            .unwrap_or(0);
+        tracing::info!(oid, rpid, "reply_add ok");
+        Ok(rpid)
+    }
+
     /// /x/v1/dm/list.so — danmaku XML for a given cid (deflate-compressed)
     pub async fn danmaku(&self, cid: i64) -> Result<Vec<crate::danmaku::Danmaku>> {
         let t0 = Instant::now();
