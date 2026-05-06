@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# Cross-build a Windows installer for bili-rust from a Linux host.
+# Cross-build the Windows NSIS installer for bili-rust from a Linux host
+# and copy the .exe into dist/.
 #
-#   ./scripts/build-windows.sh                # nsis (default)
-#   ./scripts/build-windows.sh nsis
-#   BUNDLE=nsis ./scripts/build-windows.sh
+#   ./scripts/windows.sh
 #
-# Output: target/x86_64-pc-windows-gnu/release/bundle/<format>/...
+# Output: dist/*.exe
 #
 # Notes
 # - NSIS works because makensis is portable Linux-native; Tauri downloads its
 #   NSIS plugins and the WebView2 bootstrapper into ~/.local/share/tauri/.
 # - MSI is not supported here — Tauri's WiX path runs Windows-only .exe tools.
-#   Use the GitHub Actions release workflow for MSI.
+#   Use the .github/workflows/release.yml matrix for MSI.
 # - Target is x86_64-pc-windows-gnu (mingw-w64), not -msvc, so no cargo-xwin
 #   or Wine binfmt setup is required on the host.
 
@@ -20,20 +19,7 @@ set -euo pipefail
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-BUNDLE="${1:-${BUNDLE:-nsis}}"
 TARGET="x86_64-pc-windows-gnu"
-
-case "$BUNDLE" in
-    nsis) ;;
-    msi)
-        echo "ERROR: MSI cross-build is not supported on Linux." >&2
-        echo "       Tauri's WiX bundler invokes Windows-only .exe tools." >&2
-        echo "       Use the .github/workflows/release.yml matrix for MSI." >&2
-        exit 2 ;;
-    *)
-        echo "ERROR: unknown bundle '$BUNDLE' (expected: nsis)" >&2
-        exit 2 ;;
-esac
 
 # ── Prereqs ──────────────────────────────────────────────────────────
 echo "==> Checking prerequisites..."
@@ -67,11 +53,18 @@ if ! rustup target list --installed | grep -q "^wasm32-unknown-unknown\$"; then
 fi
 
 # ── Build ────────────────────────────────────────────────────────────
-echo "==> cargo tauri build --target ${TARGET} --bundles ${BUNDLE}"
-cargo tauri build --target "$TARGET" --bundles "$BUNDLE"
+echo "==> cargo tauri build --target ${TARGET} --bundles nsis"
+cargo tauri build --target "$TARGET" --bundles nsis
 
-# ── Report ───────────────────────────────────────────────────────────
+# ── Stage output into dist/ ──────────────────────────────────────────
+mkdir -p dist
+shopt -s nullglob
+for f in "target/${TARGET}/release/bundle/nsis"/*.exe; do
+    cp -f "$f" dist/
+done
+shopt -u nullglob
+
+# ── Manifest ─────────────────────────────────────────────────────────
 echo
-echo "==> output:"
-find "target/${TARGET}/release/bundle/${BUNDLE}" -maxdepth 1 -type f \
-    \( -name "*.exe" -o -name "*.msi" \) -print
+echo "==> dist/:"
+ls -lh dist/ | tail -n +2
