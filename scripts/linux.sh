@@ -74,6 +74,16 @@ JOINED="$(IFS=,; echo "${SELECTED[*]}")"
 # is slightly larger but functionally identical.
 export NO_STRIP=true
 
+# linuxdeploy-plugin-gtk.sh runs `find "$gobject_libdir"` (== /usr/lib) without
+# -maxdepth, so it descends into bundled-app dirs like /usr/lib/openshot/ and
+# tries to deploy stale GTK copies that pull in obsolete deps (libffi.so.7).
+# Confine the search to the top level. Idempotent — only patches if needed.
+GTK_PLUGIN="${HOME}/.cache/tauri/linuxdeploy-plugin-gtk.sh"
+if [[ -f "$GTK_PLUGIN" ]] && ! grep -q 'find "$directory" -maxdepth 1' "$GTK_PLUGIN"; then
+    echo "==> patching $GTK_PLUGIN to avoid /usr/lib subdir traversal"
+    sed -i 's|find "$directory" \\[(]|find "$directory" -maxdepth 1 \\(|g' "$GTK_PLUGIN"
+fi
+
 echo "==> cargo tauri build --bundles ${JOINED}"
 cargo tauri build --bundles "$JOINED"
 
